@@ -9,54 +9,16 @@ func main() {
 	app := tview.NewApplication()
 
 	menu := tview.NewList().
-		AddItem("Commits", "Create and manage commits", 'c', nil).
-		AddItem("Status", "View git status", 's', nil).
-		AddItem("Branch Management", "Manage branches", 'b', nil).
-		AddItem("Sync", "Sync changes with remote", 'y', nil).
-		AddItem("Configuration", "Configure user and options", 'o', nil).
-		AddItem("Quit", "Press to exit", 'q', func() {
+		AddItem("Save Changes", "Save your work safely", 'c', nil).
+		AddItem("Check Files", "See what changed in your files", 's', nil).
+		AddItem("Branches (Work Areas)", "Manage different versions of your work", 'b', nil).
+		AddItem("Sync Changes", "Keep your work up to date", 'y', nil).
+		AddItem("Settings", "Set your name and options", 'o', nil).
+		AddItem("Exit", "Close the program", 'q', func() {
 			app.Stop()
 		})
 
 	menu.SetBorder(true).SetTitle("Menu").SetTitleAlign(tview.AlignLeft)
-
-	// Submenu lists for each main menu item
-	commitSubmenu := tview.NewList().
-		AddItem("New Commit", "Create a new commit", 'n', nil).
-		AddItem("Amend Commit", "Amend last commit", 'a', nil).
-		AddItem("View Log", "Show commit log", 'v', nil).
-		AddItem("Search History", "Search commits", 's', nil)
-
-	configurationSubmenu := tview.NewList().
-		AddItem("User Name", "Set user name", 'u', nil).
-		AddItem("User Email", "Set user email", 'e', nil).
-		AddItem("Custom Options", "Set custom options", 'c', nil)
-
-	statusSubmenu := tview.NewList().
-		AddItem("Show Status", "Show git status", 's', nil)
-
-	branchSubmenu := tview.NewList().
-		AddItem("List Branches", "List all branches", 'l', nil).
-		AddItem("Create Branch", "Create a new branch", 'c', nil).
-		AddItem("Delete Branch", "Delete a branch", 'd', nil)
-
-	syncSubmenu := tview.NewList().
-		AddItem("Sync", "Sync changes with remote", 's', nil).
-		AddItem("Fetch", "Fetch changes from remote", 'f', nil).
-		AddItem("Push", "Push changes to remote", 'p', nil).
-		AddItem("Pull", "Pull changes from remote", 'l', nil)
-
-	submenus := map[string]*tview.List{
-		"Commits":           commitSubmenu,
-		"Status":            statusSubmenu,
-		"Branch Management": branchSubmenu,
-		"Sync":              syncSubmenu,
-		"Configuration":     configurationSubmenu,
-	}
-
-	for _, submenu := range submenus {
-		submenu.SetBorder(true).SetTitle("Submenu")
-	}
 
 	// Action panel to the right of submenu
 	actionPanel := tview.NewTextView().
@@ -65,6 +27,120 @@ func main() {
 		SetRegions(true).
 		SetWrap(true)
 	actionPanel.SetBorder(true).SetTitle("Action Panel")
+
+	// Help text constants
+	const saveHelp = `Save Changes help:
+
+"Save Now" means to save your current work safely.
+Example: You edited files and want to save a snapshot.
+
+"Fix Last Save" lets you change your last saved snapshot.
+Example: You forgot to add a file, so you fix the last save.
+
+"Undo Changes" lets you discard changes you made since last save.
+Example: You made a mistake and want to go back to the last saved state.
+
+"View History" shows all your saved snapshots.
+
+"Search History" helps find a saved snapshot by keyword.`
+
+	const checkFilesHelp = `Check Files help:
+
+"Show Changes" lets you see what files have changed since last save.
+Example: You want to know which files you edited.
+
+"View File Differences" shows line-by-line changes in a file.
+Example: See exactly what you changed in a file.`
+
+	const branchesHelp = `Branches (Work Areas) help:
+
+"Show Branches" lists all versions of your work.
+
+"New Branch" starts a new version to work on.
+Example: You want to try a new feature without changing main work.
+
+"Remove Branch" deletes a version you no longer need.
+
+"Merge Branch" combines changes from one version into another.
+Example: You finished a feature in a separate branch and want to add it to your main work.
+
+"Rename Branch" lets you rename a branch for clarity.
+
+A branch is like a separate workspace for your changes.`
+
+	const syncHelp = `Sync Changes help:
+
+"Send Updates" sends your saved work to the central place.
+
+"Get Updates" gets work saved by others.
+
+"Check for Updates" checks if others have new work.
+
+"Sync All" sends your work and gets others' work to keep up to date.`
+
+	const settingsHelp = `Settings help:
+
+"Set Name" sets your name for saved work.
+
+"Set Email" sets your email for saved work.
+
+"Other Options" lets you change extra settings.`
+
+	saveChangesSubmenu := tview.NewList().
+		AddItem("Save Now", "Save your current work", 'n', nil).
+		AddItem("Fix Last Save", "Change your last saved work", 'a', nil).
+		AddItem("Undo Changes", "Discard changes since last save", 'u', nil).
+		AddItem("View History", "See past saved work", 'v', nil).
+		AddItem("Search History", "Find saved work by keyword", 's', nil).
+		AddItem("Help", "What is saving?", 'h', func() {
+			actionPanel.SetText(saveHelp)
+		})
+
+	checkFilesSubmenu := tview.NewList().
+		AddItem("Show Changes", "See what files changed", 's', nil).
+		AddItem("View File Differences", "See line-by-line changes", 'd', nil).
+		AddItem("Help", "What is checking files?", 'h', func() {
+			actionPanel.SetText(checkFilesHelp)
+		})
+
+	branchesSubmenu := tview.NewList().
+		AddItem("Show Branches", "See all versions of your work", 'l', nil).
+		AddItem("New Branch", "Start a new version of your work", 'c', nil).
+		AddItem("Remove Branch", "Delete a version of your work", 'd', nil).
+		AddItem("Merge Branch", "Combine changes from one version into another", 'm', nil).
+		AddItem("Rename Branch", "Rename a branch", 'r', nil).
+		AddItem("Help", "What is a branch?", 'h', func() {
+			actionPanel.SetText(branchesHelp)
+		})
+
+	syncChangesSubmenu := tview.NewList().
+		AddItem("Send Updates", "Send your work to the central place", 'p', nil).
+		AddItem("Get Updates", "Get work from others", 'l', nil).
+		AddItem("Check for Updates", "See if others have new work", 'f', nil).
+		AddItem("Sync All", "Send and get updates", 's', nil).
+		AddItem("Help", "What is syncing?", 'h', func() {
+			actionPanel.SetText(syncHelp)
+		})
+
+	settingsSubmenu := tview.NewList().
+		AddItem("Set Name", "Your name for saved work", 'u', nil).
+		AddItem("Set Email", "Your email for saved work", 'e', nil).
+		AddItem("Other Options", "Extra settings", 'c', nil).
+		AddItem("Help", "Settings help", 'h', func() {
+			actionPanel.SetText(settingsHelp)
+		})
+
+	submenus := map[string]*tview.List{
+		"Save Changes":          saveChangesSubmenu,
+		"Check Files":           checkFilesSubmenu,
+		"Branches (Work Areas)": branchesSubmenu,
+		"Sync Changes":          syncChangesSubmenu,
+		"Settings":              settingsSubmenu,
+	}
+
+	for _, submenu := range submenus {
+		submenu.SetBorder(true).SetTitle("Submenu")
+	}
 
 	// Content panel holds submenu on left and action panel on right
 	content := tview.NewFlex()
@@ -78,12 +154,16 @@ func main() {
 		}
 	}
 
-	menu.SetChangedFunc(func(index int, mainText string, secondaryText string, shortcut rune) {
-		showSubmenu(mainText)
+	menu.SetSelectedFunc(func(index int, mainText string, secondaryText string, shortcut rune) {
+		if mainText == "Exit" {
+			app.Stop()
+		} else {
+			showSubmenu(mainText)
+		}
 	})
 
 	// Initially show the first submenu
-	showSubmenu("Commits")
+	showSubmenu("Save Changes")
 
 	flex := tview.NewFlex().
 		AddItem(menu, 0, 1, true).
@@ -126,13 +206,20 @@ func main() {
 				app.SetFocus(menu)
 				return nil
 			}
-		case tcell.KeyRight, tcell.KeyEnter:
+		case tcell.KeyRight:
 			if app.GetFocus() == menu {
 				mainText, _ := menu.GetItemText(menu.GetCurrentItem())
 				showSubmenu(mainText)
 				if submenu, ok := submenus[mainText]; ok {
 					app.SetFocus(submenu)
 				}
+				return nil
+			}
+		case tcell.KeyEnter:
+			if app.GetFocus() == menu {
+				index := menu.GetCurrentItem()
+				mainText, secondaryText := menu.GetItemText(index)
+				menu.GetSelectedFunc()(index, mainText, secondaryText, 0)
 				return nil
 			}
 		case tcell.KeyLeft:
