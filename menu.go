@@ -71,28 +71,29 @@ A branch is like a separate workspace for your changes.`,
 "Other Options" lets you change extra settings.`,
 }
 
-func createSaveChangesSubmenu(actionPanel *tview.TextView) *tview.List {
-	return tview.NewList().
-		AddItem("Save Now", "Save your current work", 'n', nil).
-		AddItem("Fix Last Save", "Change your last saved work", 'a', nil).
-		AddItem("Undo Changes", "Discard changes since last save", 'u', nil).
-		AddItem("View History", "See past saved work", 'v', nil).
-		AddItem("Search History", "Find saved work by keyword", 's', nil).
-		AddItem("Help", "What is saving?", 'h', func() {
-			actionPanel.SetText(helpTexts[SaveChangesKey])
-		})
+func createSaveChangesSubmenu(actionText *tview.TextView) *tview.List {
+	list := tview.NewList()
+	list.AddItem("Save Now", "Save your current work", 'n', nil)
+	list.AddItem("Fix Last Save", "Change your last saved work", 'a', nil)
+	list.AddItem("Undo Changes", "Discard changes since last save", 'u', nil)
+	list.AddItem("View History", "See past saved work", 'v', nil)
+	list.AddItem("Search History", "Find saved work by keyword", 's', nil)
+	list.AddItem("Help", "What is saving?", 'h', func() {
+		actionText.SetText(helpTexts[SaveChangesKey])
+	})
+	return list
 }
 
-func createCheckFilesSubmenu(actionPanel *tview.TextView) *tview.List {
+func createCheckFilesSubmenu(actionText *tview.TextView) *tview.List {
 	return tview.NewList().
 		AddItem("Show Changes", "See what files changed", 's', nil).
 		AddItem("View File Differences", "See line-by-line changes", 'd', nil).
 		AddItem("Help", "What is checking files?", 'h', func() {
-			actionPanel.SetText(helpTexts[CheckFilesKey])
+			actionText.SetText(helpTexts[CheckFilesKey])
 		})
 }
 
-func createBranchesSubmenu(actionPanel *tview.TextView) *tview.List {
+func createBranchesSubmenu(actionText *tview.TextView) *tview.List {
 	return tview.NewList().
 		AddItem("Show Branches", "See all versions of your work", 'l', nil).
 		AddItem("New Branch", "Start a new version of your work", 'c', nil).
@@ -100,28 +101,28 @@ func createBranchesSubmenu(actionPanel *tview.TextView) *tview.List {
 		AddItem("Merge Branch", "Combine changes from one version into another", 'm', nil).
 		AddItem("Rename Branch", "Rename a branch", 'r', nil).
 		AddItem("Help", "What is a branch?", 'h', func() {
-			actionPanel.SetText(helpTexts[BranchesKey])
+			actionText.SetText(helpTexts[BranchesKey])
 		})
 }
 
-func createSyncChangesSubmenu(actionPanel *tview.TextView) *tview.List {
+func createSyncChangesSubmenu(actionText *tview.TextView) *tview.List {
 	return tview.NewList().
 		AddItem("Send Updates", "Send your work to the central place", 'p', nil).
 		AddItem("Get Updates", "Get work from others", 'l', nil).
 		AddItem("Check for Updates", "See if others have new work", 'f', nil).
 		AddItem("Sync All", "Send and get updates", 's', nil).
 		AddItem("Help", "What is syncing?", 'h', func() {
-			actionPanel.SetText(helpTexts[SyncChangesKey])
+			actionText.SetText(helpTexts[SyncChangesKey])
 		})
 }
 
-func createSettingsSubmenu(actionPanel *tview.TextView) *tview.List {
+func createSettingsSubmenu(actionText *tview.TextView) *tview.List {
 	return tview.NewList().
 		AddItem("Set Name", "Your name for saved work", 'u', nil).
 		AddItem("Set Email", "Your email for saved work", 'e', nil).
 		AddItem("Other Options", "Extra settings", 'c', nil).
 		AddItem("Help", "Settings help", 'h', func() {
-			actionPanel.SetText(helpTexts[SettingsKey])
+			actionText.SetText(helpTexts[SettingsKey])
 		})
 }
 
@@ -137,13 +138,13 @@ func createMainMenu(app *tview.Application) *tview.List {
 		})
 }
 
-func createMenu(app *tview.Application, actionPanel *tview.TextView) (*tview.List, map[string]*tview.List) {
+func createMenu(app *tview.Application, actionText *tview.TextView) (*tview.List, map[string]*tview.List) {
 	submenus := map[string]*tview.List{
-		SaveChangesKey: createSaveChangesSubmenu(actionPanel),
-		CheckFilesKey:  createCheckFilesSubmenu(actionPanel),
-		BranchesKey:    createBranchesSubmenu(actionPanel),
-		SyncChangesKey: createSyncChangesSubmenu(actionPanel),
-		SettingsKey:    createSettingsSubmenu(actionPanel),
+		SaveChangesKey: createSaveChangesSubmenu(actionText),
+		CheckFilesKey:  createCheckFilesSubmenu(actionText),
+		BranchesKey:    createBranchesSubmenu(actionText),
+		SyncChangesKey: createSyncChangesSubmenu(actionText),
+		SettingsKey:    createSettingsSubmenu(actionText),
 	}
 
 	for _, submenu := range submenus {

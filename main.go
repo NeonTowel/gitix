@@ -4,35 +4,42 @@ import (
 	"fmt"
 
 	"github.com/gdamore/tcell/v2"
+	"github.com/neontowel/gitix/save"
 	"github.com/rivo/tview"
 )
 
+// FocusZone represents a UI focus zone
+type FocusZone int
+
 const (
-	minWidth  = 110
-	minHeight = 30
+	FocusZoneMenu FocusZone = iota
+	FocusZoneSubmenu
+	FocusZoneActionPanel
 )
 
 func main() {
 	app := tview.NewApplication()
 
-	actionPanel := tview.NewTextView().
+	actionPanel := tview.NewFlex().SetDirection(tview.FlexRow)
+	actionText := tview.NewTextView().
 		SetText("Select an action from the submenu").
 		SetDynamicColors(true).
 		SetRegions(true).
 		SetWrap(true)
-	actionPanel.SetBorder(true).SetTitle("Action Panel")
+	actionText.SetBorder(true).SetTitle("Action Panel")
 
-	menu, submenus := createMenu(app, actionPanel)
-
-	// Add borders and titles to menus
-	menu.SetBorder(true).SetTitle("Main Menu")
-	for _, submenu := range submenus {
-		submenu.SetBorder(true).SetTitle("Submenu")
-	}
+	actionPanel.AddItem(actionText, 0, 1, false)
 
 	// Top half horizontal flex: main menu and submenu each half width
-	topHalf := tview.NewFlex().SetDirection(tview.FlexColumn).
-		AddItem(menu, 0, 1, true)
+	var topHalf = tview.NewFlex().SetDirection(tview.FlexColumn)
+
+	// Create menu and submenus
+	menu, submenus := createMenu(app, actionText)
+
+	topHalf.AddItem(menu, 0, 1, true)
+
+	// Focus management
+	var currentFocusZone FocusZone = FocusZoneMenu
 
 	var currentSubmenu tview.Primitive
 
@@ -52,8 +59,22 @@ func main() {
 		}
 	}
 
-	// Initially show the first submenu
-	showSubmenu("Save Changes")
+	// Set selected function for main menu items to show submenu and set focus
+	menu.SetSelectedFunc(func(index int, mainText string, secondaryText string, shortcut rune) {
+		if submenu, ok := submenus[mainText]; ok {
+			// Show selected submenu
+			showSubmenu(mainText)
+			// Set focus to submenu
+			app.SetFocus(submenu)
+			currentFocusZone = FocusZoneSubmenu
+		}
+	})
+
+	// Add borders and titles to menus
+	menu.SetBorder(true).SetTitle("Main Menu")
+	for _, submenu := range submenus {
+		submenu.SetBorder(true).SetTitle("Submenu")
+	}
 
 	// Bottom half is action panel
 	bottomHalf := tview.NewFlex().SetDirection(tview.FlexRow).
@@ -125,66 +146,114 @@ func main() {
 		}
 	}
 
-	// Set input capture to update colors on focus change
-	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		// Call existing key handling code first
-		switch event.Key() {
-		case tcell.KeyTab:
-			if app.GetFocus() == menu {
-				mainText, _ := menu.GetItemText(menu.GetCurrentItem())
-				if mainText != "Exit" {
-					showSubmenu(mainText)
-					app.SetFocus(submenus[mainText])
-					updateFocusColors(submenus[mainText])
-				}
-				return nil
+	// Helper to set focus and update colors
+	setFocus := func(zone FocusZone) {
+		currentFocusZone = zone
+		switch zone {
+		case FocusZoneMenu:
+			app.SetFocus(menu)
+			updateFocusColors(menu)
+		case FocusZoneSubmenu:
+			if currentSubmenu != nil {
+				app.SetFocus(currentSubmenu)
+				updateFocusColors(currentSubmenu)
 			} else {
 				app.SetFocus(menu)
 				updateFocusColors(menu)
-				return nil
 			}
-		case tcell.KeyRight:
-			if app.GetFocus() == menu {
-				mainText, _ := menu.GetItemText(menu.GetCurrentItem())
-				if mainText != "Exit" {
-					showSubmenu(mainText)
-					app.SetFocus(submenus[mainText])
-					updateFocusColors(submenus[mainText])
-				}
-				return nil
-			}
-		case tcell.KeyEnter:
-			if app.GetFocus() == menu {
-				index := menu.GetCurrentItem()
-				if index >= 0 {
-					mainText, secondaryText := menu.GetItemText(index)
-					if mainText == "Exit" {
-						app.Stop()
-					} else {
-						showSubmenu(mainText)
-						app.SetFocus(submenus[mainText])
-						updateFocusColors(submenus[mainText])
-						if menu.GetSelectedFunc() != nil {
-							menu.GetSelectedFunc()(index, mainText, secondaryText, 0)
-						}
-					}
-				}
-				return nil
-			}
-		case tcell.KeyLeft:
-			if focus := app.GetFocus(); focus != nil {
-				if focus != menu {
-					app.SetFocus(menu)
-					updateFocusColors(menu)
-					return nil
-				}
-			}
+		case FocusZoneActionPanel:
+			app.SetFocus(actionPanel)
+			// No border color update for action panel
 		}
-		return event
+	}
+
+	// Variable to track if action UI is active
+	var actionUIActive bool
+	var actionUIPrimitive tview.Primitive
+
+	// Function to clear action UI and return focus to menu
+	clearActionUI := func() {
+		actionPanel.Clear()
+		actionText.SetText("Select an action from the submenu")
+		actionPanel.AddItem(actionText, 0, 1, false)
+		setFocus(FocusZoneMenu)
+		actionUIActive = false
+		actionUIPrimitive = nil
+	}
+
+	// New function wrapping createSaveChangesSubmenu to inject cancel callback
+	createSaveChangesSubmenuWithCancel := func(app *tview.Application, actionPanel *tview.Flex, actionText *tview.TextView, onCancel func()) *tview.List {
+		list := createSaveChangesSubmenu(actionText)
+		list.SetSelectedFunc(func(index int, mainText string, secondaryText string, shortcut rune) {
+			if mainText == "Save Now" {
+				actionUIActive = true
+				actionUIPrimitive = save.ShowSaveUI(actionPanel, app, actionText, onCancel)
+				if actionUIPrimitive != nil {
+					app.SetFocus(actionUIPrimitive)
+				}
+			}
+		})
+		return list
+	}
+
+	// Replace submenu creation for SaveChangesKey
+	submenus = map[string]*tview.List{
+		SaveChangesKey: createSaveChangesSubmenuWithCancel(app, actionPanel, actionText, clearActionUI),
+		CheckFilesKey:  createCheckFilesSubmenu(actionText),
+		BranchesKey:    createBranchesSubmenu(actionText),
+		SyncChangesKey: createSyncChangesSubmenu(actionText),
+		SettingsKey:    createSettingsSubmenu(actionText),
+	}
+
+	// Set selected function for main menu items to show submenu and set focus
+	menu.SetSelectedFunc(func(index int, mainText string, secondaryText string, shortcut rune) {
+		if submenu, ok := submenus[mainText]; ok {
+			// Show selected submenu
+			showSubmenu(mainText)
+			// Set focus to submenu
+			app.SetFocus(submenu)
+			currentFocusZone = FocusZoneSubmenu
+		}
 	})
 
-	// Initialize colors
-	updateFocusColors(menu)
+	// Set input capture to delegate keys to action UI when active
+	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		if actionUIActive && actionUIPrimitive != nil {
+			// Let action UI handle all keys
+			return nil
+		}
+
+		switch event.Key() {
+		case tcell.KeyTab:
+			if event.Modifiers()&tcell.ModShift != 0 {
+				// Shift+Tab: cycle focus backward between menu and submenu only
+				if currentFocusZone == FocusZoneMenu {
+					setFocus(FocusZoneSubmenu)
+				} else {
+					setFocus(FocusZoneMenu)
+				}
+			} else {
+				// Tab: cycle focus forward between menu and submenu only
+				if currentFocusZone == FocusZoneSubmenu {
+					setFocus(FocusZoneMenu)
+				} else {
+					setFocus(FocusZoneSubmenu)
+				}
+			}
+			return nil
+
+		case tcell.KeyEsc:
+			// Esc to return focus to menu and reset action panel to initial default state
+			clearActionUI()
+			return nil
+
+		default:
+			return event
+		}
+	})
+
+	// Initialize colors and focus
+	setFocus(FocusZoneMenu)
 
 	if err := app.SetRoot(mainLayout, true).SetFocus(menu).Run(); err != nil {
 		panic(err)
