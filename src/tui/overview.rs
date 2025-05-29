@@ -199,31 +199,32 @@ pub fn render_overview_tab(f: &mut Frame, area: Rect, state: &AppState) {
         f.render_widget(calendar_paragraph, overview_chunks[1]);
     }
 
-    // Sparkline for commit activity (histogram by week)
+    // Sparkline for commit activity (histogram by day, spanning full width)
     if state.git_enabled && !commit_dates.is_empty() {
-        // Calculate the number of weeks to show (e.g., 12 weeks)
-        let num_weeks = 12;
+        let sparkline_area = overview_chunks[2];
+        let width = sparkline_area.width.saturating_sub(2); // account for borders
+        let num_days = 90;
         let today = Utc::now().date_naive();
-        let start_date = today - chrono::Duration::weeks(num_weeks as i64 - 1);
-        // Map each commit date to a week index (0 = oldest week, num_weeks-1 = this week)
-        let mut week_buckets = vec![0u64; num_weeks];
+        let start_date = today - chrono::Duration::days(num_days - 1);
+        let bars = width as usize;
+        let days_per_bar = (num_days as f32 / bars as f32).ceil() as usize;
+        let mut buckets = vec![0u64; bars];
         for date in &commit_dates {
             if *date >= start_date && *date <= today {
-                let week_idx = ((*date - start_date).num_days() / 7) as usize;
-                if week_idx < num_weeks {
-                    week_buckets[week_idx] += 1;
-                }
+                let days_since_start = (*date - start_date).num_days() as usize;
+                let bar_idx = (days_since_start / days_per_bar).min(bars - 1);
+                buckets[bar_idx] += 1;
             }
         }
         let sparkline = Sparkline::default()
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title("Commit Activity (weekly)"),
+                    .title("Commit Activity (last 3 months)"),
             )
-            .data(&week_buckets)
+            .data(&buckets)
             .style(Style::default().fg(Color::Green));
-        f.render_widget(sparkline, overview_chunks[2]);
+        f.render_widget(sparkline, sparkline_area);
     } else {
         let sparkline_paragraph = Paragraph::new("Commit Activity Sparkline: [no data]")
             .alignment(Alignment::Center)
@@ -234,10 +235,4 @@ pub fn render_overview_tab(f: &mut Frame, area: Rect, state: &AppState) {
             );
         f.render_widget(sparkline_paragraph, overview_chunks[2]);
     }
-
-    // Combined label (placeholder)
-    let label_paragraph = Paragraph::new("Date hints and direction: [placeholder]")
-        .alignment(Alignment::Left)
-        .block(Block::default());
-    f.render_widget(label_paragraph, overview_chunks[3]);
 }
