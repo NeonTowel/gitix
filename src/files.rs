@@ -27,8 +27,17 @@ pub struct FileEntry {
     pub is_dir: bool,
 }
 
-pub fn list_files(dir: &PathBuf) -> Vec<FileEntry> {
+pub fn list_files(dir: &PathBuf, add_parent: bool) -> Vec<FileEntry> {
     let mut entries = Vec::new();
+    if add_parent {
+        entries.push(FileEntry {
+            name: "..".to_string(),
+            size: 0,
+            permissions: 0,
+            modified: 0,
+            is_dir: true,
+        });
+    }
     if let Ok(read_dir) = fs::read_dir(dir) {
         for entry in read_dir.flatten() {
             if let Ok(metadata) = entry.metadata() {

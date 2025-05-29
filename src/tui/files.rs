@@ -3,11 +3,12 @@ use crate::files::{FileEntry, list_files};
 use chrono::{Local, NaiveDateTime};
 use ratatui::layout::{Alignment, Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::widgets::{Block, Borders, Row, Table};
+use ratatui::widgets::{Block, Borders, Row, Table, TableState};
 use ratatui::{Frame, layout::Rect};
 
 pub fn render_files_tab(f: &mut Frame, area: Rect, state: &AppState) {
-    let files = list_files(&state.current_path);
+    let add_parent = state.current_dir != state.root_dir;
+    let files = list_files(&state.current_dir, add_parent);
     let header = ["Permissions", "Size", "Modified", "Name"];
     let rows: Vec<Row> = files
         .iter()
@@ -34,12 +35,16 @@ pub fn render_files_tab(f: &mut Frame, area: Rect, state: &AppState) {
         Constraint::Length(20),
         Constraint::Min(10),
     ];
+    let mut table_state = TableState::default();
+    if !files.is_empty() {
+        table_state.select(Some(state.files_selected_row.min(files.len() - 1)));
+    }
     let table = Table::new(rows, widths)
         .header(Row::new(header))
         .block(Block::default().borders(Borders::ALL).title("Files"))
         .column_spacing(1)
         .highlight_style(Style::default().bg(Color::Yellow).fg(Color::Black));
-    f.render_widget(table, area);
+    f.render_stateful_widget(table, area, &mut table_state);
 }
 
 fn format_permissions(perm: u32, is_dir: bool) -> String {

@@ -165,6 +165,66 @@ pub fn start_tui(state: &mut AppState) {
                         (KeyCode::Char('q'), _) => {
                             break;
                         }
+                        (KeyCode::Down, _) if active_tab == 1 => {
+                            // Files tab: move selection down
+                            let add_parent = state.current_dir != state.root_dir;
+                            let files = crate::files::list_files(&state.current_dir, add_parent);
+                            if !files.is_empty() {
+                                state.files_selected_row =
+                                    (state.files_selected_row + 1).min(files.len() - 1);
+                            }
+                        }
+                        (KeyCode::Up, _) if active_tab == 1 => {
+                            // Files tab: move selection up
+                            let add_parent = state.current_dir != state.root_dir;
+                            let files = crate::files::list_files(&state.current_dir, add_parent);
+                            if !files.is_empty() {
+                                state.files_selected_row =
+                                    state.files_selected_row.saturating_sub(1);
+                            }
+                        }
+                        (KeyCode::Enter, _) if active_tab == 1 => {
+                            let add_parent = state.current_dir != state.root_dir;
+                            let files = crate::files::list_files(&state.current_dir, add_parent);
+                            if files.is_empty() {
+                                return;
+                            }
+                            let idx = state.files_selected_row.min(files.len() - 1);
+                            let entry = &files[idx];
+                            if entry.name == ".." && add_parent {
+                                // Go up a directory
+                                if let Some(parent) = state.current_dir.parent() {
+                                    if parent.starts_with(&state.root_dir) {
+                                        state.current_dir = parent.to_path_buf();
+                                        state.files_selected_row = 0;
+                                    }
+                                }
+                            } else if entry.is_dir {
+                                // Go into directory
+                                let mut new_dir = state.current_dir.clone();
+                                new_dir.push(&entry.name);
+                                if new_dir.starts_with(&state.root_dir) && new_dir.is_dir() {
+                                    state.current_dir = new_dir;
+                                    state.files_selected_row = 0;
+                                }
+                            } else {
+                                // Open file in $EDITOR
+                                let mut file_path = state.current_dir.clone();
+                                file_path.push(&entry.name);
+                                if let Ok(editor) = std::env::var("EDITOR") {
+                                    let mut cmd = std::process::Command::new(&editor);
+                                    // Add --wait for VSCode
+                                    if editor.contains("code") {
+                                        cmd.arg("--wait");
+                                    }
+                                    let _ = cmd.arg(&file_path).status();
+                                } else {
+                                    // Fallback to vi
+                                    let _ =
+                                        std::process::Command::new("vi").arg(&file_path).status();
+                                }
+                            }
+                        }
                         _ => {}
                     }
                 }

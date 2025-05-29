@@ -4,18 +4,22 @@ pub struct AppState {
     pub git_enabled: bool,          // Is this a git repo?
     pub show_init_prompt: bool,     // Should we prompt to init?
     pub repo_root: Option<PathBuf>, // Path to repo root if found
-    pub current_path: PathBuf,      // The directory the app is running in
+    pub root_dir: PathBuf,          // The directory jail root
+    pub current_dir: PathBuf,       // The directory currently being browsed
+    pub files_selected_row: usize,  // Selected row in files tab
                                     // Add other fields as needed (e.g., file list, user config)
 }
 
 impl Default for AppState {
     fn default() -> Self {
-        let current_path = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let mut state = AppState {
             git_enabled: false,
             show_init_prompt: false,
             repo_root: None,
-            current_path,
+            root_dir: cwd.clone(),
+            current_dir: cwd,
+            files_selected_row: 0,
         };
         state.check_git_status();
         state
@@ -24,7 +28,7 @@ impl Default for AppState {
 
 impl AppState {
     pub fn check_git_status(&mut self) {
-        match gix::discover(&self.current_path) {
+        match gix::discover(&self.current_dir) {
             Ok(repo) => {
                 self.git_enabled = true;
                 self.show_init_prompt = false;
@@ -39,7 +43,7 @@ impl AppState {
     }
 
     pub fn try_init_repo(&mut self) -> Result<(), gix::init::Error> {
-        match gix::init(&self.current_path) {
+        match gix::init(&self.current_dir) {
             Ok(repo) => {
                 self.git_enabled = true;
                 self.show_init_prompt = false;
@@ -59,14 +63,16 @@ impl AppState {
 
 pub fn run() {
     // Get the current directory
-    let current_path = std::env::current_dir().unwrap();
+    let cwd = std::env::current_dir().unwrap();
 
     // Initialize app state
     let mut state = AppState {
         git_enabled: false,
         show_init_prompt: false,
         repo_root: None,
-        current_path,
+        root_dir: cwd.clone(),
+        current_dir: cwd,
+        files_selected_row: 0,
     };
     state.check_git_status();
 
