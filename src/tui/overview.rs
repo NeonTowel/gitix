@@ -1,7 +1,11 @@
 use crate::app::AppState;
+use chrono::{Datelike, NaiveDate, Utc};
 use ratatui::layout::{Alignment, Constraint, Direction, Layout};
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::widgets::calendar::{CalendarEventStore, Monthly};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::{Frame, layout::Rect};
+use time::{Date, Month};
 
 pub fn render_overview_tab(f: &mut Frame, area: Rect, state: &AppState) {
     let overview_chunks = Layout::default()
@@ -16,7 +20,12 @@ pub fn render_overview_tab(f: &mut Frame, area: Rect, state: &AppState) {
         .split(area);
 
     // --- Repo stats logic ---
-    let (num_commits, num_branches, latest_author) = if state.git_enabled {
+    let (num_commits, num_branches, latest_author, commit_dates): (
+        Option<u64>,
+        Option<u64>,
+        Option<String>,
+        Vec<NaiveDate>,
+    ) = if state.git_enabled {
         if let Some(repo_root) = &state.repo_root {
             match gix::open(repo_root) {
                 Ok(repo) => {
@@ -50,15 +59,54 @@ pub fn render_overview_tab(f: &mut Frame, area: Rect, state: &AppState) {
                             Some(format!("{} <{}>", name, email))
                         })
                     });
-                    (num_commits, num_branches, latest_author)
+                    // Gather commit dates for calendar
+                    let mut commit_dates: Vec<NaiveDate> = Vec::new();
+                    if let Ok(head) = repo.head_ref() {
+                        if let Some(head) = head {
+                            if let Some(oid) = head.target().try_id() {
+                                if let Ok(obj) = repo.find_object(oid) {
+                                    if let Ok(commit) = obj.try_into_commit() {
+                                        if let Ok(walk) = commit.ancestors().all() {
+                                            for info in walk.filter_map(Result::ok) {
+                                                // Get the commit id from Info
+                                                let oid = info.id();
+                                                if let Ok(obj) = repo.find_object(oid) {
+                                                    if let Ok(commit_obj) = obj.try_into_commit() {
+                                                        if let Ok(time) = commit_obj.time() {
+                                                            let timestamp = time.seconds;
+                                                            let naive =
+                                                                chrono::NaiveDateTime::from_timestamp_opt(
+                                                                    timestamp, 0,
+                                                                );
+                                                            if let Some(naive) = naive {
+                                                                let date = NaiveDate::from_ymd_opt(
+                                                                    naive.year(),
+                                                                    naive.month(),
+                                                                    naive.day(),
+                                                                );
+                                                                if let Some(date) = date {
+                                                                    commit_dates.push(date);
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    (num_commits, num_branches, latest_author, commit_dates)
                 }
-                Err(_) => (None, None, None),
+                Err(_) => (None, None, None, Vec::new()),
             }
         } else {
-            (None, None, None)
+            (None, None, None, Vec::new())
         }
     } else {
-        (None, None, None)
+        (None, None, None, Vec::new())
     };
 
     // Stats row
@@ -86,11 +134,70 @@ pub fn render_overview_tab(f: &mut Frame, area: Rect, state: &AppState) {
         );
     f.render_widget(stats_paragraph, overview_chunks[0]);
 
-    // Calendar for last 3 months (placeholder)
-    let calendar_paragraph = Paragraph::new("Calendar (last 3 months): [placeholder]")
-        .alignment(Alignment::Center)
-        .block(Block::default().borders(Borders::ALL).title("Calendar"));
-    f.render_widget(calendar_paragraph, overview_chunks[1]);
+    // --- Calendar for last 3 months ---
+    if state.git_enabled && !commit_dates.is_empty() {
+        // Build event store for last 3 months
+        let today = Utc::now().date_naive();
+        let three_months_ago = today - chrono::Duration::days(90);
+        let mut event_store = CalendarEventStore::default();
+        // Style for commit days (bright green)
+        let commit_style = Style::default()
+            .fg(Color::Green)
+            .bg(Color::Black)
+            .add_modifier(Modifier::BOLD);
+        // Style for non-commit days (dimmed almost black)
+        let default_style = Style::default()
+            .fg(Color::Rgb(20, 20, 20))
+            .bg(Color::Black)
+            .add_modifier(Modifier::DIM);
+        // Add commit days to event store
+        for date in &commit_dates {
+            if *date >= three_months_ago {
+                let month = Month::try_from(date.month() as u8).ok();
+                let day = u8::try_from(date.day()).ok();
+                if let (Some(month), Some(day)) = (month, day) {
+                    if let Ok(time_date) = Date::from_calendar_date(date.year(), month, day) {
+                        event_store.add(time_date, commit_style);
+                    }
+                }
+            }
+        }
+        // Render 3 months horizontally
+        let mut months = vec![];
+        for offset in (0..3).rev() {
+            let month_date = today - chrono::Duration::days(30 * offset);
+            let year = month_date.year();
+            let month = month_date.month();
+            if let Ok(month_enum) = Month::try_from(month as u8) {
+                if let Ok(time_date) = Date::from_calendar_date(year, month_enum, 1) {
+                    let cal = Monthly::new(time_date, &event_store)
+                        .default_style(default_style)
+                        .block(
+                            Block::default()
+                                .borders(Borders::ALL)
+                                .title(format!("{:04}-{:02}", year, month)),
+                        );
+                    months.push(cal);
+                }
+            }
+        }
+        let cal_chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(33),
+                Constraint::Percentage(33),
+                Constraint::Percentage(34),
+            ])
+            .split(overview_chunks[1]);
+        for (i, cal) in months.into_iter().enumerate() {
+            f.render_widget(cal, cal_chunks[i]);
+        }
+    } else {
+        let calendar_paragraph = Paragraph::new("Calendar (last 3 months): [no data]")
+            .alignment(Alignment::Center)
+            .block(Block::default().borders(Borders::ALL).title("Calendar"));
+        f.render_widget(calendar_paragraph, overview_chunks[1]);
+    }
 
     // Sparkline for commit activity (placeholder)
     let sparkline_paragraph = Paragraph::new("Commit Activity Sparkline: [placeholder]")
