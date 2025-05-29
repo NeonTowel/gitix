@@ -3,7 +3,7 @@ use chrono::{Datelike, NaiveDate, Utc};
 use ratatui::layout::{Alignment, Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::calendar::{CalendarEventStore, Monthly};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{Block, Borders, Paragraph, Sparkline};
 use ratatui::{Frame, layout::Rect};
 use time::{Date, Month};
 
@@ -199,15 +199,41 @@ pub fn render_overview_tab(f: &mut Frame, area: Rect, state: &AppState) {
         f.render_widget(calendar_paragraph, overview_chunks[1]);
     }
 
-    // Sparkline for commit activity (placeholder)
-    let sparkline_paragraph = Paragraph::new("Commit Activity Sparkline: [placeholder]")
-        .alignment(Alignment::Center)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("Commit Activity"),
-        );
-    f.render_widget(sparkline_paragraph, overview_chunks[2]);
+    // Sparkline for commit activity (histogram by week)
+    if state.git_enabled && !commit_dates.is_empty() {
+        // Calculate the number of weeks to show (e.g., 12 weeks)
+        let num_weeks = 12;
+        let today = Utc::now().date_naive();
+        let start_date = today - chrono::Duration::weeks(num_weeks as i64 - 1);
+        // Map each commit date to a week index (0 = oldest week, num_weeks-1 = this week)
+        let mut week_buckets = vec![0u64; num_weeks];
+        for date in &commit_dates {
+            if *date >= start_date && *date <= today {
+                let week_idx = ((*date - start_date).num_days() / 7) as usize;
+                if week_idx < num_weeks {
+                    week_buckets[week_idx] += 1;
+                }
+            }
+        }
+        let sparkline = Sparkline::default()
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Commit Activity (weekly)"),
+            )
+            .data(&week_buckets)
+            .style(Style::default().fg(Color::Green));
+        f.render_widget(sparkline, overview_chunks[2]);
+    } else {
+        let sparkline_paragraph = Paragraph::new("Commit Activity Sparkline: [no data]")
+            .alignment(Alignment::Center)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Commit Activity"),
+            );
+        f.render_widget(sparkline_paragraph, overview_chunks[2]);
+    }
 
     // Combined label (placeholder)
     let label_paragraph = Paragraph::new("Date hints and direction: [placeholder]")
