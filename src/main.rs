@@ -6,5 +6,6 @@ mod git;
 mod tui;
 
 fn main() {
-    app::run();
+    let mut state = app::AppState::default();
+    tui::start_tui(&mut state);
 }

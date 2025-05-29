@@ -8,6 +8,20 @@ pub struct AppState {
                                     // Add other fields as needed (e.g., file list, user config)
 }
 
+impl Default for AppState {
+    fn default() -> Self {
+        let current_path = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let mut state = AppState {
+            git_enabled: false,
+            show_init_prompt: false,
+            repo_root: None,
+            current_path,
+        };
+        state.check_git_status();
+        state
+    }
+}
+
 impl AppState {
     pub fn check_git_status(&mut self) {
         match gix::discover(&self.current_path) {
