@@ -518,6 +518,9 @@ dependencies = [
  "chrono",
  "crossterm 0.29.0",
  "gix",
+ "gix-index",
+ "gix-object",
+ "gix-status",
  "ratatui",
  "time",
 ]
