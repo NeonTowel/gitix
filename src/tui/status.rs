@@ -3,14 +3,15 @@ use gix::Repository;
 use ratatui::layout::Alignment;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
-use ratatui::{Frame, layout::Rect};
+use ratatui::widgets::{Block, Borders, Cell, List, ListItem, Paragraph, Row, Table, TableState};
+use ratatui::{Frame, layout::Constraint, layout::Rect};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
 pub struct GitFileStatus {
     pub path: PathBuf,
     pub status: FileStatusType,
+    pub file_size: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -35,12 +36,23 @@ impl FileStatusType {
         }
     }
 
+    pub fn as_description(&self) -> &'static str {
+        match self {
+            FileStatusType::Modified => "Modified",
+            FileStatusType::Added => "New file",
+            FileStatusType::Deleted => "Deleted",
+            FileStatusType::Untracked => "Untracked",
+            FileStatusType::Renamed { .. } => "Renamed",
+            FileStatusType::TypeChange => "Type changed",
+        }
+    }
+
     pub fn color(&self) -> Color {
         match self {
             FileStatusType::Modified => Color::Yellow,
             FileStatusType::Added => Color::Green,
             FileStatusType::Deleted => Color::Red,
-            FileStatusType::Untracked => Color::Gray,
+            FileStatusType::Untracked => Color::Cyan,
             FileStatusType::Renamed { .. } => Color::Blue,
             FileStatusType::TypeChange => Color::Magenta,
         }
@@ -106,6 +118,9 @@ pub fn get_git_status() -> Result<Vec<GitFileStatus>, Box<dyn std::error::Error>
 
                 let path_bstr = gix::bstr::BStr::new(git_path.as_bytes());
 
+                // Get file size
+                let file_size = std::fs::metadata(&path).ok().map(|m| m.len());
+
                 // Check if file is tracked in the index
                 let is_tracked = index.entry_by_path(path_bstr).is_some();
 
@@ -114,6 +129,7 @@ pub fn get_git_status() -> Result<Vec<GitFileStatus>, Box<dyn std::error::Error>
                     files.push(GitFileStatus {
                         path: std::path::PathBuf::from(relative_path),
                         status: FileStatusType::Untracked,
+                        file_size,
                     });
                 } else {
                     // For tracked files, do a modification check
@@ -132,6 +148,7 @@ pub fn get_git_status() -> Result<Vec<GitFileStatus>, Box<dyn std::error::Error>
                                     files.push(GitFileStatus {
                                         path: std::path::PathBuf::from(relative_path),
                                         status: FileStatusType::Modified,
+                                        file_size,
                                     });
                                 }
                             }
@@ -211,61 +228,115 @@ pub fn get_git_status_detailed() -> Result<Vec<GitFileStatus>, Box<dyn std::erro
     get_git_status()
 }
 
-pub fn render_status_tab(f: &mut Frame, area: Rect, _state: &AppState) {
+// Helper function to format file size
+fn format_file_size(size: Option<u64>) -> String {
+    match size {
+        Some(bytes) => {
+            if bytes < 1024 {
+                format!("{} B", bytes)
+            } else if bytes < 1024 * 1024 {
+                format!("{:.1} KB", bytes as f64 / 1024.0)
+            } else if bytes < 1024 * 1024 * 1024 {
+                format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+            } else {
+                format!("{:.1} GB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
+            }
+        }
+        None => "-".to_string(),
+    }
+}
+
+pub fn render_status_tab(f: &mut Frame, area: Rect, state: &mut AppState) {
     let git_status = match get_git_status() {
         Ok(files) => files,
         Err(e) => {
-            let error_paragraph = Paragraph::new(format!("Error: {}", e))
+            let error_paragraph = Paragraph::new(format!("Error reading repository: {}", e))
                 .alignment(Alignment::Center)
                 .style(Style::default().fg(Color::Red))
-                .block(Block::default().borders(Borders::ALL).title("Git Status"));
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("Repository Status"),
+                );
             f.render_widget(error_paragraph, area);
             return;
         }
     };
 
     if git_status.is_empty() {
-        let clean_paragraph = Paragraph::new("Working tree clean ✓")
-            .alignment(Alignment::Center)
-            .style(Style::default().fg(Color::Green))
-            .block(Block::default().borders(Borders::ALL).title("Git Status"));
+        let clean_paragraph = Paragraph::new(
+            "✓ No changes detected\n\nYour working directory is clean and matches the last commit.",
+        )
+        .alignment(Alignment::Center)
+        .style(Style::default().fg(Color::Green))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Repository Status"),
+        );
         f.render_widget(clean_paragraph, area);
         return;
     }
 
-    let items: Vec<ListItem> = git_status
+    // Ensure table state selection is valid
+    if !git_status.is_empty() {
+        let current_selection = state.status_table_state.selected().unwrap_or(0);
+        if current_selection >= git_status.len() {
+            state.status_table_state.select(Some(0));
+        } else if state.status_table_state.selected().is_none() {
+            // Initialize selection to first item if nothing is selected
+            state.status_table_state.select(Some(0));
+        }
+    }
+
+    // Create table headers
+    let header = Row::new(vec![
+        Cell::from("File Path").style(Style::default().add_modifier(Modifier::BOLD)),
+        Cell::from("Status").style(Style::default().add_modifier(Modifier::BOLD)),
+        Cell::from("Size").style(Style::default().add_modifier(Modifier::BOLD)),
+    ]);
+
+    // Create table rows
+    let rows: Vec<Row> = git_status
         .iter()
         .map(|file| {
-            let status_span = Span::styled(
-                format!("{} ", file.status.as_symbol()),
+            let path_cell = Cell::from(file.path.display().to_string())
+                .style(Style::default().fg(Color::White));
+
+            let status_cell = Cell::from(file.status.as_description()).style(
                 Style::default()
                     .fg(file.status.color())
                     .add_modifier(Modifier::BOLD),
             );
 
-            let path_span = Span::styled(
-                file.path.display().to_string(),
-                Style::default().fg(Color::White),
-            );
+            let size_cell = Cell::from(format_file_size(file.file_size))
+                .style(Style::default().fg(Color::Gray));
 
-            let line = Line::from(vec![status_span, path_span]);
-
-            ListItem::new(line)
+            Row::new(vec![path_cell, status_cell, size_cell])
         })
         .collect();
 
-    let list = List::new(items)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(format!("Git Status ({} files)", git_status.len())),
-        )
-        .highlight_style(
-            Style::default()
-                .bg(Color::DarkGray)
-                .add_modifier(Modifier::BOLD),
-        )
-        .highlight_symbol("► ");
+    // Create the table
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Percentage(60), // File path takes most space
+            Constraint::Percentage(25), // Status column
+            Constraint::Percentage(15), // Size column
+        ],
+    )
+    .header(header)
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(format!("Repository Changes ({} files)", git_status.len())),
+    )
+    .highlight_style(
+        Style::default()
+            .bg(Color::DarkGray)
+            .add_modifier(Modifier::BOLD),
+    )
+    .highlight_symbol("► ");
 
-    f.render_widget(list, area);
+    f.render_stateful_widget(table, area, &mut state.status_table_state);
 }

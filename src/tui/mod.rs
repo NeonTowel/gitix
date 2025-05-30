@@ -116,7 +116,11 @@ pub fn start_tui(state: &mut AppState) {
                 }
 
                 // Key hints
-                let hints = "[Tab] Next Tab  [Shift+Tab] Previous Tab  [q] Quit";
+                let hints = match active_tab {
+                    1 => "[Tab] Next Tab  [Shift+Tab] Previous Tab  [↑↓] Navigate  [Enter] Open  [q] Quit",
+                    2 if state.git_enabled => "[Tab] Next Tab  [Shift+Tab] Previous Tab  [↑↓] Navigate Files  [q] Quit",
+                    _ => "[Tab] Next Tab  [Shift+Tab] Previous Tab  [q] Quit",
+                };
                 let hint_paragraph = Paragraph::new(hints)
                     .alignment(ratatui::layout::Alignment::Center)
                     .style(Style::default().fg(Color::DarkGray));
@@ -181,6 +185,26 @@ pub fn start_tui(state: &mut AppState) {
                             if !files.is_empty() {
                                 state.files_selected_row =
                                     state.files_selected_row.saturating_sub(1);
+                            }
+                        }
+                        (KeyCode::Down, _) if active_tab == 2 => {
+                            // Status tab: move selection down
+                            if let Ok(git_status) = crate::tui::status::get_git_status() {
+                                if !git_status.is_empty() {
+                                    let current = state.status_table_state.selected().unwrap_or(0);
+                                    let next = (current + 1).min(git_status.len() - 1);
+                                    state.status_table_state.select(Some(next));
+                                }
+                            }
+                        }
+                        (KeyCode::Up, _) if active_tab == 2 => {
+                            // Status tab: move selection up
+                            if let Ok(git_status) = crate::tui::status::get_git_status() {
+                                if !git_status.is_empty() {
+                                    let current = state.status_table_state.selected().unwrap_or(0);
+                                    let prev = current.saturating_sub(1);
+                                    state.status_table_state.select(Some(prev));
+                                }
                             }
                         }
                         (KeyCode::Enter, _) if active_tab == 1 => {

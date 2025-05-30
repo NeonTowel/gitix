@@ -1,3 +1,4 @@
+use ratatui::widgets::TableState;
 use std::path::PathBuf;
 
 pub struct AppState {
@@ -7,6 +8,7 @@ pub struct AppState {
     pub root_dir: PathBuf,          // The directory jail root
     pub current_dir: PathBuf,       // The directory currently being browsed
     pub files_selected_row: usize,  // Selected row in files tab
+    pub status_table_state: TableState, // Table state for status tab scrolling
                                     // Add other fields as needed (e.g., file list, user config)
 }
 
@@ -20,6 +22,7 @@ impl Default for AppState {
             root_dir: cwd.clone(),
             current_dir: cwd,
             files_selected_row: 0,
+            status_table_state: TableState::default(),
         };
         state.check_git_status();
         state
@@ -73,6 +76,7 @@ pub fn run() {
         root_dir: cwd.clone(),
         current_dir: cwd,
         files_selected_row: 0,
+        status_table_state: TableState::default(),
     };
     state.check_git_status();
 
