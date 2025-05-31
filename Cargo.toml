@@ -13,3 +13,8 @@ gix-status = "0.19"
 gix-index = "0.40"
 gix-object = "0.49"
 tui-textarea = "0.7"
+catppuccin = { version = "2.5.1", features = ["ratatui"] }
+
+[[example]]
+name = "theme_demo"
+path = "examples/theme_demo.rs"

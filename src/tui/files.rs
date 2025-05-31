@@ -1,5 +1,6 @@
 use crate::app::AppState;
 use crate::files::{FileEntry, list_files};
+use crate::tui::theme::Theme;
 use chrono::{Local, NaiveDateTime};
 use ratatui::layout::{Alignment, Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
@@ -7,6 +8,14 @@ use ratatui::widgets::{Block, Borders, Row, Table, TableState};
 use ratatui::{Frame, layout::Rect};
 
 pub fn render_files_tab(f: &mut Frame, area: Rect, state: &AppState) {
+    let theme = Theme::new();
+
+    // Set panel background
+    f.render_widget(
+        Block::default().style(theme.secondary_background_style()),
+        area,
+    );
+
     let add_parent = state.current_dir != state.root_dir;
     let files = list_files(&state.current_dir, add_parent);
     let header = ["Permissions", "Size", "Modified", "Name"];
@@ -20,11 +29,11 @@ pub fn render_files_tab(f: &mut Frame, area: Rect, state: &AppState) {
                 entry.size.to_string()
             };
             let modified = format_time(entry.modified);
-            let mut style = Style::default();
+            let mut style = theme.text_style();
             if entry.is_dir {
-                style = style.fg(Color::Blue).add_modifier(Modifier::BOLD);
+                style = theme.info_style().add_modifier(Modifier::BOLD);
             } else if entry.permissions & 0o111 != 0 {
-                style = style.fg(Color::Green);
+                style = theme.success_style();
             }
             Row::new(vec![perms, size, modified, entry.name.clone()]).style(style)
         })
@@ -40,10 +49,17 @@ pub fn render_files_tab(f: &mut Frame, area: Rect, state: &AppState) {
         table_state.select(Some(state.files_selected_row.min(files.len() - 1)));
     }
     let table = Table::new(rows, widths)
-        .header(Row::new(header))
-        .block(Block::default().borders(Borders::ALL).title("Files"))
+        .header(Row::new(header).style(theme.accent2_style()))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Files")
+                .title_style(theme.title_style())
+                .border_style(theme.border_style())
+                .style(theme.secondary_background_style()),
+        )
         .column_spacing(1)
-        .highlight_style(Style::default().bg(Color::Yellow).fg(Color::Black));
+        .row_highlight_style(theme.highlight_style());
     f.render_stateful_widget(table, area, &mut table_state);
 }
 

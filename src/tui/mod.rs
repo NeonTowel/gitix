@@ -3,11 +3,12 @@ mod overview;
 mod save_changes;
 mod settings;
 mod status;
+pub mod theme;
 mod update;
 
 use crate::app::{AppState, SaveChangesFocus};
 use crate::git::get_git_status;
-use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+use crate::tui::theme::Theme;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
@@ -17,6 +18,7 @@ use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Paragraph, Tabs};
+use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use std::io;
 
 const TAB_TITLES: [&str; 6] = [
@@ -49,6 +51,8 @@ impl Tab {
 }
 
 pub fn start_tui(state: &mut AppState) {
+    let theme = Theme::new();
+
     enable_raw_mode().unwrap();
     let mut stdout = io::stdout();
     crossterm::execute!(stdout, EnterAlternateScreen).unwrap();
@@ -62,6 +66,13 @@ pub fn start_tui(state: &mut AppState) {
         terminal
             .draw(|f| {
                 let size = f.size();
+                
+                // Set main background
+                f.render_widget(
+                    Block::default().style(theme.main_background_style()),
+                    size
+                );
+                
                 let chunks = Layout::default()
                     .direction(Direction::Vertical)
                     .margin(1)
@@ -69,26 +80,33 @@ pub fn start_tui(state: &mut AppState) {
                         [
                             Constraint::Length(3), // Tab bar
                             Constraint::Min(1),    // Main area
-                            Constraint::Length(2), // Key hints
+                            Constraint::Length(2), // Key hints (status bar)
                         ]
                         .as_ref(),
                     )
                     .split(size);
 
-                // Tab bar
+                // Tab bar with semantic theme colors
                 let tab_titles: Vec<Line> = TAB_TITLES.iter().enumerate().map(|(i, t)| {
                     if !state.git_enabled && i > 1 {
-                        Line::styled(*t, Style::default().fg(Color::DarkGray))
+                        Line::styled(*t, theme.disabled_tab_style())
                     } else if active_tab == i {
-                        Line::styled(*t, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+                        Line::styled(*t, theme.active_tab_style())
                     } else {
-                        Line::raw(*t)
+                        Line::styled(*t, theme.inactive_tab_style())
                     }
                 }).collect();
                 let tabs = Tabs::new(tab_titles)
                     .select(active_tab)
-                    .block(Block::default().borders(Borders::ALL).title("Git TUI"))
-                    .style(Style::default().fg(Color::White));
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title("GIT-iX")
+                            .title_style(Style::default().fg(theme.maroon))
+                            .border_style(theme.border_style())
+                            .style(theme.secondary_background_style()) // Mantle background for tab panel
+                    )
+                    .style(theme.text_style());
                 f.render_widget(tabs, chunks[0]);
 
                 // Main area: delegate to tab modules
@@ -102,30 +120,35 @@ pub fn start_tui(state: &mut AppState) {
                     _ => {}
                 }
 
-                // Modal popup for git init prompt
+                // Modal popup for git init prompt with proper semantic styling
                 if active_tab == 0 && state.show_init_prompt {
                     let area = centered_rect(60, 7, size);
                     let modal = Paragraph::new("This folder is not a Git repository.\n\nInitialize a new Git repository here? (Y/N)")
                         .alignment(ratatui::layout::Alignment::Center)
+                        .style(theme.text_style())
                         .block(
                             Block::default()
                                 .title("Initialize Git Repository")
+                                .title_style(theme.title_style())
                                 .borders(Borders::ALL)
-                                .border_style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                                .border_style(theme.focused_border_style()) // Accent color for focus
+                                .style(theme.secondary_background_style()), // Mantle background
                         );
                     f.render_widget(modal, area);
                 }
 
-                // Key hints
+                // Status bar with key hints (crust background per guidelines)
                 let hints = match active_tab {
                     1 => "[Tab] Next Tab  [Shift+Tab] Previous Tab  [↑↓] Navigate  [Enter] Open  [q] Quit",
                     2 if state.git_enabled => "[Tab] Next Tab  [Shift+Tab] Previous Tab  [↑↓] Navigate Files  [q] Quit",
-                    3 if state.git_enabled => "[Tab] Next Tab  [↑↓] Navigate  [Space] Stage/Unstage  [Enter] Commit  [q] Quit",
+                    3 if state.git_enabled && state.show_commit_help => "[Enter] OK  [Esc] Close Help",
+                    3 if state.git_enabled && state.show_template_popup => "[←→] Navigate  [Enter] Apply  [Esc] Cancel",
+                    3 if state.git_enabled => "[Tab] Next Tab  [↑↓] Navigate  [Space] Stage/Unstage  [Enter] Commit  [Shift+?] Help  [Shift+T] Template  [q] Quit",
                     _ => "[Tab] Next Tab  [Shift+Tab] Previous Tab  [q] Quit",
                 };
                 let hint_paragraph = Paragraph::new(hints)
                     .alignment(ratatui::layout::Alignment::Center)
-                    .style(Style::default().fg(Color::DarkGray));
+                    .style(theme.status_bar_style()); // Crust background with text color
                 f.render_widget(hint_paragraph, chunks[2]);
             })
             .unwrap();
@@ -252,21 +275,55 @@ pub fn start_tui(state: &mut AppState) {
                             }
                         }
                         (KeyCode::Down, _) if active_tab == 3 => {
-                            // Save changes tab: seamless navigation down
-                            state.save_changes_navigate_down();
+                            // Save changes tab navigation - only if no popups are shown
+                            if !state.show_commit_help && !state.show_template_popup {
+                                state.save_changes_navigate_down();
+                            } else if state.show_commit_help {
+                                // Scroll down in help popup
+                                state.help_popup_scroll_down();
+                            }
                         }
                         (KeyCode::Up, _) if active_tab == 3 => {
-                            // Save changes tab: seamless navigation up
-                            state.save_changes_navigate_up();
+                            // Save changes tab navigation - only if no popups are shown
+                            if !state.show_commit_help && !state.show_template_popup {
+                                state.save_changes_navigate_up();
+                            } else if state.show_commit_help {
+                                // Scroll up in help popup
+                                state.help_popup_scroll_up();
+                            }
                         }
                         (KeyCode::Char(' '), _) if active_tab == 3 => {
-                            // Save changes tab: toggle file staging (only works when in file list)
-                            if state.save_changes_focus == SaveChangesFocus::FileList {
+                            // Save changes tab: toggle file staging - only if no popups are shown
+                            if !state.show_commit_help && !state.show_template_popup && state.save_changes_focus == SaveChangesFocus::FileList {
                                 state.toggle_file_staging();
                             }
                         }
-                        (KeyCode::Enter, _) if active_tab == 3 => {
-                            // Save changes tab: commit staged files (only works when in file list)
+                        (KeyCode::Enter, _) if active_tab == 3 && state.show_commit_help => {
+                            // Close help popup when Enter is pressed
+                            state.show_commit_help = false;
+                        }
+                        (KeyCode::Esc, _) if active_tab == 3 && state.show_commit_help => {
+                            // Close help popup when Escape is pressed
+                            state.show_commit_help = false;
+                        }
+                        (KeyCode::Enter, _) if active_tab == 3 && state.show_template_popup => {
+                            // Template popup: apply selection
+                            state.apply_template_selection();
+                        }
+                        (KeyCode::Esc, _) if active_tab == 3 && state.show_template_popup => {
+                            // Template popup: close without applying
+                            state.show_template_popup = false;
+                        }
+                        (KeyCode::Left, _) if active_tab == 3 && state.show_template_popup => {
+                            // Template popup: navigate to Yes button
+                            state.template_popup_navigate_left();
+                        }
+                        (KeyCode::Right, _) if active_tab == 3 && state.show_template_popup => {
+                            // Template popup: navigate to No button
+                            state.template_popup_navigate_right();
+                        }
+                        (KeyCode::Enter, _) if active_tab == 3 && !state.show_commit_help && !state.show_template_popup => {
+                            // Save changes tab: commit staged files (only works when in file list and no popups)
                             if state.save_changes_focus == SaveChangesFocus::FileList {
                                 if let Err(e) = state.commit_staged_files() {
                                     // TODO: Show error message in UI
@@ -277,20 +334,22 @@ pub fn start_tui(state: &mut AppState) {
                                 state.commit_message.insert_newline();
                             }
                         }
-                        // Handle commit message input when focused on commit message
+                        (KeyCode::Char('?'), KeyModifiers::SHIFT) if active_tab == 3 && !state.show_commit_help && !state.show_template_popup => {
+                            // Save changes tab: show help popup
+                            state.show_commit_help = true;
+                        }
+                        (KeyCode::Char('T'), KeyModifiers::SHIFT) if active_tab == 3 && !state.show_commit_help && !state.show_template_popup => {
+                            // Save changes tab: show template popup
+                            state.toggle_template_popup();
+                        }
+                        // Handle commit message input when focused on commit message and no popups are shown
                         _ if active_tab == 3
+                            && !state.show_commit_help
+                            && !state.show_template_popup
                             && state.save_changes_focus == SaveChangesFocus::CommitMessage =>
                         {
-                            // For now, basic character input - more complex input handling can be added later
-                            match key_event.code {
-                                KeyCode::Char(c) => {
-                                    state.commit_message.insert_char(c);
-                                }
-                                KeyCode::Backspace => {
-                                    state.commit_message.delete_char();
-                                }
-                                _ => {}
-                            }
+                            // Use TextArea's built-in input handling for full text editing support
+                            state.commit_message.input(Event::Key(key_event));
                         }
                         _ => {}
                     }

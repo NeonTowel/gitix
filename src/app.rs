@@ -1,3 +1,4 @@
+use ratatui::widgets::ScrollbarState;
 use ratatui::widgets::TableState;
 use std::path::PathBuf;
 use tui_textarea::TextArea;
@@ -16,12 +17,23 @@ pub struct AppState {
     pub staged_files: Vec<PathBuf>,           // Files staged for commit
     pub commit_message: TextArea<'static>,    // Commit message input
     pub save_changes_focus: SaveChangesFocus, // Which part of the save changes UI has focus
+    pub show_commit_help: bool,               // Whether to show commit message help popup
+    pub help_popup_scroll: usize,             // Scroll position for help popup
+    pub help_popup_scrollbar_state: ScrollbarState, // Scrollbar state for help popup
+    pub show_template_popup: bool,            // Whether to show template selection popup
+    pub template_popup_selection: TemplatePopupSelection, // Which button is selected in template popup
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SaveChangesFocus {
     FileList,
     CommitMessage,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum TemplatePopupSelection {
+    Yes,
+    No,
 }
 
 impl Default for AppState {
@@ -38,7 +50,12 @@ impl Default for AppState {
             save_changes_table_state: TableState::default(),
             staged_files: Vec::new(),
             commit_message: TextArea::new(vec![String::new()]),
-            save_changes_focus: SaveChangesFocus::FileList,
+            save_changes_focus: SaveChangesFocus::CommitMessage,
+            show_commit_help: false,
+            help_popup_scroll: 0,
+            help_popup_scrollbar_state: ScrollbarState::default(),
+            show_template_popup: false,
+            template_popup_selection: TemplatePopupSelection::No,
         };
         state.check_git_status();
         state
@@ -78,6 +95,51 @@ impl AppState {
         self.show_init_prompt = false;
         self.repo_root = None;
     }
+
+    pub fn toggle_commit_help(&mut self) {
+        self.show_commit_help = !self.show_commit_help;
+        // Reset scroll position when opening help
+        if self.show_commit_help {
+            self.help_popup_scroll = 0;
+            self.help_popup_scrollbar_state = ScrollbarState::default();
+        }
+    }
+
+    pub fn toggle_template_popup(&mut self) {
+        self.show_template_popup = !self.show_template_popup;
+        // Reset selection to Yes when opening (default to positive action)
+        if self.show_template_popup {
+            self.template_popup_selection = TemplatePopupSelection::Yes;
+        }
+    }
+
+    pub fn template_popup_navigate_left(&mut self) {
+        self.template_popup_selection = TemplatePopupSelection::Yes;
+    }
+
+    pub fn template_popup_navigate_right(&mut self) {
+        self.template_popup_selection = TemplatePopupSelection::No;
+    }
+
+    pub fn apply_template_selection(&mut self) {
+        if self.template_popup_selection == TemplatePopupSelection::Yes {
+            // Apply conventional commits template
+            let template = vec![
+                "feat: ".to_string(),
+                "".to_string(),
+                "# Conventional Commits Format:".to_string(),
+                "# <type>[optional scope]: <description>".to_string(),
+                "#".to_string(),
+                "# Types: feat, fix, docs, style, refactor, test, chore".to_string(),
+                "# Example: feat(auth): add user login validation".to_string(),
+            ];
+            self.commit_message = TextArea::new(template);
+            // Position cursor after "feat: "
+            self.commit_message
+                .move_cursor(tui_textarea::CursorMove::Jump(0, 5));
+        }
+        self.show_template_popup = false;
+    }
 }
 
 pub fn run() {
@@ -96,7 +158,12 @@ pub fn run() {
         save_changes_table_state: TableState::default(),
         staged_files: Vec::new(),
         commit_message: TextArea::new(vec![String::new()]),
-        save_changes_focus: SaveChangesFocus::FileList,
+        save_changes_focus: SaveChangesFocus::CommitMessage,
+        show_commit_help: false,
+        help_popup_scroll: 0,
+        help_popup_scrollbar_state: ScrollbarState::default(),
+        show_template_popup: false,
+        template_popup_selection: TemplatePopupSelection::No,
     };
     state.check_git_status();
 

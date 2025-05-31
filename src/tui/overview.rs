@@ -1,4 +1,5 @@
 use crate::app::AppState;
+use crate::tui::theme::Theme;
 use chrono::{Datelike, NaiveDate, Utc};
 use ratatui::layout::{Alignment, Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
@@ -91,6 +92,14 @@ fn format_relative_time(timestamp: i64) -> String {
 }
 
 pub fn render_overview_tab(f: &mut Frame, area: Rect, state: &AppState) {
+    let theme = Theme::new();
+
+    // Set panel background (mantle per guidelines)
+    f.render_widget(
+        Block::default().style(theme.secondary_background_style()),
+        area,
+    );
+
     // Define minimum heights for each component
     const STATS_HEIGHT: u16 = 10;
     const CALENDAR_HEIGHT: u16 = 7;
@@ -131,7 +140,15 @@ pub fn render_overview_tab(f: &mut Frame, area: Rect, state: &AppState) {
     if !show_stats {
         let too_small_paragraph = Paragraph::new("Terminal too small - resize to view overview")
             .alignment(Alignment::Center)
-            .block(Block::default().borders(Borders::ALL).title("Overview"));
+            .style(theme.text_style())
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Overview")
+                    .title_style(theme.title_style())
+                    .border_style(theme.border_style())
+                    .style(theme.secondary_background_style()), // Mantle background
+            );
         f.render_widget(too_small_paragraph, area);
         return;
     }
@@ -244,29 +261,48 @@ pub fn render_overview_tab(f: &mut Frame, area: Rect, state: &AppState) {
             ])
             .split(overview_chunks[chunk_idx]);
 
-        // Repository stats line (centered)
-        let mut stats_lines = vec![];
+        // Repository stats line with highlighted labels and values
+        let mut stats_spans = Vec::new();
+
         if let Some(n) = num_commits {
-            stats_lines.push(format!("Commits: {}", n));
+            stats_spans.push(Span::styled("Commits: ", theme.stats_label_style()));
+            stats_spans.push(Span::styled(n.to_string(), theme.text_style()));
         }
+
         if let Some(n) = num_branches {
-            stats_lines.push(format!("Branches: {}", n));
+            if !stats_spans.is_empty() {
+                stats_spans.push(Span::styled("    |    ", theme.secondary_text_style()));
+            }
+            stats_spans.push(Span::styled("Branches: ", theme.stats_label_style()));
+            stats_spans.push(Span::styled(n.to_string(), theme.text_style()));
         }
+
         if let Some(ref author) = latest_author {
-            stats_lines.push(format!("Latest Author: {}", author));
+            if !stats_spans.is_empty() {
+                stats_spans.push(Span::styled("    |    ", theme.secondary_text_style()));
+            }
+            stats_spans.push(Span::styled("Latest Author: ", theme.stats_label_style()));
+            stats_spans.push(Span::styled(author.clone(), theme.text_style()));
         }
-        let stats_text = if stats_lines.is_empty() {
-            "No repository stats available".to_string()
+
+        let stats_line = if stats_spans.is_empty() {
+            Line::from(Span::styled(
+                "No repository stats available",
+                theme.muted_text_style(),
+            ))
         } else {
-            stats_lines.join("    |    ")
+            Line::from(stats_spans)
         };
 
-        let stats_paragraph = Paragraph::new(stats_text)
+        let stats_paragraph = Paragraph::new(stats_line)
             .alignment(Alignment::Center)
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title("Repository Stats"),
+                    .title("Repository Stats")
+                    .title_style(theme.title_style())
+                    .border_style(theme.border_style())
+                    .style(theme.secondary_background_style()), // Mantle background
             );
         f.render_widget(stats_paragraph, stats_chunks[0]);
 
@@ -287,7 +323,7 @@ pub fn render_overview_tab(f: &mut Frame, area: Rect, state: &AppState) {
         if recent_commits.is_empty() {
             commit_lines.push(Line::from(Span::styled(
                 "No recent commits found",
-                Style::default().fg(Color::Gray),
+                theme.muted_text_style(),
             )));
         } else {
             for commit in &recent_commits {
@@ -295,12 +331,12 @@ pub fn render_overview_tab(f: &mut Frame, area: Rect, state: &AppState) {
 
                 let line = Line::from(vec![
                     Span::raw("• "),
-                    Span::styled(&commit.message, Style::default().fg(Color::White)),
-                    Span::raw(" - "),
-                    Span::styled(&commit.author, Style::default().fg(Color::Cyan)),
-                    Span::raw(" ("),
-                    Span::styled(relative_time, Style::default().fg(Color::Yellow)),
-                    Span::raw(")"),
+                    Span::styled(&commit.message, theme.commit_message_style()),
+                    Span::styled(" - ", theme.secondary_text_style()),
+                    Span::styled(&commit.author, theme.author_style()),
+                    Span::styled(" (", theme.secondary_text_style()),
+                    Span::styled(relative_time, theme.timestamp_style()),
+                    Span::styled(")", theme.secondary_text_style()),
                 ]);
                 commit_lines.push(line);
             }
@@ -311,7 +347,10 @@ pub fn render_overview_tab(f: &mut Frame, area: Rect, state: &AppState) {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title("Recent Changes"),
+                    .title("Recent Changes")
+                    .title_style(theme.title_style())
+                    .border_style(theme.border_style())
+                    .style(theme.secondary_background_style()), // Mantle background
             );
         f.render_widget(commit_paragraph, stats_chunks[1]);
 
@@ -325,28 +364,40 @@ pub fn render_overview_tab(f: &mut Frame, area: Rect, state: &AppState) {
             let today = Utc::now().date_naive();
             let three_months_ago = today - chrono::Duration::days(90);
             let mut event_store = CalendarEventStore::default();
-            // Style for commit days (bright green)
-            let commit_style = Style::default()
-                .fg(Color::Green)
-                .bg(Color::Black)
-                .add_modifier(Modifier::BOLD);
-            // Style for non-commit days (dimmed almost black)
-            let default_style = Style::default()
-                .fg(Color::Rgb(20, 20, 20))
-                .bg(Color::Black)
-                .add_modifier(Modifier::DIM);
-            // Add commit days to event store
+
+            // Count commits per day to determine activity level
+            let mut commits_per_day = std::collections::HashMap::new();
             for date in &commit_dates {
                 if *date >= three_months_ago {
-                    let month = Month::try_from(date.month() as u8).ok();
-                    let day = u8::try_from(date.day()).ok();
-                    if let (Some(month), Some(day)) = (month, day) {
-                        if let Ok(time_date) = Date::from_calendar_date(date.year(), month, day) {
-                            event_store.add(time_date, commit_style);
-                        }
+                    *commits_per_day.entry(*date).or_insert(0) += 1;
+                }
+            }
+
+            // Style for non-commit days (surface color)
+            let default_style = Style::default().fg(theme.surface1).bg(theme.mantle); // Mantle background
+
+            // Add commit days to event store with different styles based on activity
+            for (date, commit_count) in commits_per_day {
+                let month = Month::try_from(date.month() as u8).ok();
+                let day = u8::try_from(date.day()).ok();
+                if let (Some(month), Some(day)) = (month, day) {
+                    if let Ok(time_date) = Date::from_calendar_date(date.year(), month, day) {
+                        // Use accent2 (rosewater) with different styling based on commit count
+                        let commit_style = if commit_count >= 3 {
+                            // High activity: bold rosewater
+                            Style::default()
+                                .fg(theme.accent2())
+                                .bg(theme.mantle)
+                                .add_modifier(Modifier::BOLD)
+                        } else {
+                            // Some activity: normal rosewater
+                            Style::default().fg(theme.accent2()).bg(theme.mantle)
+                        };
+                        event_store.add(time_date, commit_style);
                     }
                 }
             }
+
             // Render 3 months horizontally
             let mut months = vec![];
             for offset in (0..3).rev() {
@@ -360,7 +411,10 @@ pub fn render_overview_tab(f: &mut Frame, area: Rect, state: &AppState) {
                             .block(
                                 Block::default()
                                     .borders(Borders::ALL)
-                                    .title(format!("{:04}-{:02}", year, month)),
+                                    .title(format!("{:04}-{:02}", year, month))
+                                    .title_style(theme.title_style())
+                                    .border_style(theme.border_style())
+                                    .style(theme.secondary_background_style()), // Mantle background
                             );
                         months.push(cal);
                     }
@@ -380,7 +434,15 @@ pub fn render_overview_tab(f: &mut Frame, area: Rect, state: &AppState) {
         } else {
             let calendar_paragraph = Paragraph::new("Calendar (last 3 months): [no data]")
                 .alignment(Alignment::Center)
-                .block(Block::default().borders(Borders::ALL).title("Calendar"));
+                .style(theme.muted_text_style())
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("Calendar")
+                        .title_style(theme.title_style())
+                        .border_style(theme.border_style())
+                        .style(theme.secondary_background_style()), // Mantle background
+                );
             f.render_widget(calendar_paragraph, overview_chunks[chunk_idx]);
         }
         chunk_idx += 1;
@@ -408,18 +470,25 @@ pub fn render_overview_tab(f: &mut Frame, area: Rect, state: &AppState) {
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
-                        .title("Recent Activity (last 3 months)"),
+                        .title("Recent Activity (last 3 months)")
+                        .title_style(theme.title_style())
+                        .border_style(theme.border_style())
+                        .style(theme.secondary_background_style()), // Mantle background
                 )
                 .data(&buckets)
-                .style(Style::default().fg(Color::Green));
+                .style(theme.accent2_style());
             f.render_widget(sparkline, sparkline_area);
         } else {
             let sparkline_paragraph = Paragraph::new("Recent Activity: [no data]")
                 .alignment(Alignment::Center)
+                .style(theme.muted_text_style())
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
-                        .title("Recent Activity"),
+                        .title("Recent Activity")
+                        .title_style(theme.title_style())
+                        .border_style(theme.border_style())
+                        .style(theme.secondary_background_style()), // Mantle background
                 );
             f.render_widget(sparkline_paragraph, overview_chunks[chunk_idx]);
         }
