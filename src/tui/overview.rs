@@ -100,16 +100,14 @@ pub fn render_overview_tab(f: &mut Frame, area: Rect, state: &AppState) {
         area,
     );
 
-    // Define minimum heights for each component
-    const STATS_HEIGHT: u16 = 10;
-    const CALENDAR_HEIGHT: u16 = 7;
-    const SPARKLINE_HEIGHT: u16 = 6;
+    // Define responsive heights based on screen size
+    let (stats_height, calendar_height, sparkline_height) = calculate_responsive_heights(area);
     const LABEL_HEIGHT: u16 = 1;
 
     // Calculate minimum total height needed for all components
-    let min_height_all = STATS_HEIGHT + CALENDAR_HEIGHT + SPARKLINE_HEIGHT + LABEL_HEIGHT;
-    let min_height_with_sparkline = STATS_HEIGHT + SPARKLINE_HEIGHT + LABEL_HEIGHT;
-    let min_height_stats_only = STATS_HEIGHT + LABEL_HEIGHT;
+    let min_height_all = stats_height + calendar_height + sparkline_height + LABEL_HEIGHT;
+    let min_height_with_sparkline = stats_height + sparkline_height + LABEL_HEIGHT;
+    let min_height_stats_only = stats_height + LABEL_HEIGHT;
 
     // Determine what components to show based on available height
     let show_calendar = area.height >= min_height_all;
@@ -120,15 +118,15 @@ pub fn render_overview_tab(f: &mut Frame, area: Rect, state: &AppState) {
     let mut constraints = Vec::new();
 
     if show_stats {
-        constraints.push(Constraint::Length(STATS_HEIGHT));
+        constraints.push(Constraint::Length(stats_height));
     }
 
     if show_calendar {
-        constraints.push(Constraint::Length(CALENDAR_HEIGHT));
+        constraints.push(Constraint::Length(calendar_height));
     }
 
     if show_sparkline {
-        constraints.push(Constraint::Length(SPARKLINE_HEIGHT));
+        constraints.push(Constraint::Length(sparkline_height));
     }
 
     if show_stats || show_calendar || show_sparkline {
@@ -357,82 +355,18 @@ pub fn render_overview_tab(f: &mut Frame, area: Rect, state: &AppState) {
         chunk_idx += 1;
     }
 
-    // --- Calendar for last 3 months (only if we have enough space) ---
+    // --- Responsive Calendar (adapts number of months based on screen size) ---
     if show_calendar {
         if state.git_enabled && !commit_dates.is_empty() {
-            // Build event store for last 3 months
-            let today = Utc::now().date_naive();
-            let three_months_ago = today - chrono::Duration::days(90);
-            let mut event_store = CalendarEventStore::default();
-
-            // Count commits per day to determine activity level
-            let mut commits_per_day = std::collections::HashMap::new();
-            for date in &commit_dates {
-                if *date >= three_months_ago {
-                    *commits_per_day.entry(*date).or_insert(0) += 1;
-                }
-            }
-
-            // Style for non-commit days (surface color)
-            let default_style = Style::default().fg(theme.surface1).bg(theme.mantle); // Mantle background
-
-            // Add commit days to event store with different styles based on activity
-            for (date, commit_count) in commits_per_day {
-                let month = Month::try_from(date.month() as u8).ok();
-                let day = u8::try_from(date.day()).ok();
-                if let (Some(month), Some(day)) = (month, day) {
-                    if let Ok(time_date) = Date::from_calendar_date(date.year(), month, day) {
-                        // Use accent2 (rosewater) with different styling based on commit count
-                        let commit_style = if commit_count >= 3 {
-                            // High activity: bold rosewater
-                            Style::default()
-                                .fg(theme.accent2())
-                                .bg(theme.mantle)
-                                .add_modifier(Modifier::BOLD)
-                        } else {
-                            // Some activity: normal rosewater
-                            Style::default().fg(theme.accent2()).bg(theme.mantle)
-                        };
-                        event_store.add(time_date, commit_style);
-                    }
-                }
-            }
-
-            // Render 3 months horizontally
-            let mut months = vec![];
-            for offset in (0..3).rev() {
-                let month_date = today - chrono::Duration::days(30 * offset);
-                let year = month_date.year();
-                let month = month_date.month();
-                if let Ok(month_enum) = Month::try_from(month as u8) {
-                    if let Ok(time_date) = Date::from_calendar_date(year, month_enum, 1) {
-                        let cal = Monthly::new(time_date, &event_store)
-                            .default_style(default_style)
-                            .block(
-                                Block::default()
-                                    .borders(Borders::ALL)
-                                    .title(format!("{:04}-{:02}", year, month))
-                                    .title_style(theme.title_style())
-                                    .border_style(theme.border_style())
-                                    .style(theme.secondary_background_style()), // Mantle background
-                            );
-                        months.push(cal);
-                    }
-                }
-            }
-            let cal_chunks = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([
-                    Constraint::Percentage(33),
-                    Constraint::Percentage(33),
-                    Constraint::Percentage(34),
-                ])
-                .split(overview_chunks[chunk_idx]);
-            for (i, cal) in months.into_iter().enumerate() {
-                f.render_widget(cal, cal_chunks[i]);
-            }
+            render_responsive_calendar(
+                f,
+                overview_chunks[chunk_idx],
+                &commit_dates,
+                &theme,
+                area.width,
+            );
         } else {
-            let calendar_paragraph = Paragraph::new("Calendar (last 3 months): [no data]")
+            let calendar_paragraph = Paragraph::new("Calendar: [no data]")
                 .alignment(Alignment::Center)
                 .style(theme.muted_text_style())
                 .block(
@@ -448,36 +382,16 @@ pub fn render_overview_tab(f: &mut Frame, area: Rect, state: &AppState) {
         chunk_idx += 1;
     }
 
-    // Sparkline for commit activity (only if we have enough space)
+    // Sparkline for commit activity (responsive height)
     if show_sparkline {
         if state.git_enabled && !commit_dates.is_empty() {
-            let sparkline_area = overview_chunks[chunk_idx];
-            let width = sparkline_area.width.saturating_sub(2); // account for borders
-            let num_days = 90;
-            let today = Utc::now().date_naive();
-            let start_date = today - chrono::Duration::days(num_days - 1);
-            let bars = width as usize;
-            let days_per_bar = (num_days as f32 / bars as f32).ceil() as usize;
-            let mut buckets = vec![0u64; bars];
-            for date in &commit_dates {
-                if *date >= start_date && *date <= today {
-                    let days_since_start = (*date - start_date).num_days() as usize;
-                    let bar_idx = (days_since_start / days_per_bar).min(bars - 1);
-                    buckets[bar_idx] += 1;
-                }
-            }
-            let sparkline = Sparkline::default()
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .title("Recent Activity (last 3 months)")
-                        .title_style(theme.title_style())
-                        .border_style(theme.border_style())
-                        .style(theme.secondary_background_style()), // Mantle background
-                )
-                .data(&buckets)
-                .style(theme.accent2_style());
-            f.render_widget(sparkline, sparkline_area);
+            render_responsive_sparkline(
+                f,
+                overview_chunks[chunk_idx],
+                &commit_dates,
+                &theme,
+                sparkline_height,
+            );
         } else {
             let sparkline_paragraph = Paragraph::new("Recent Activity: [no data]")
                 .alignment(Alignment::Center)
@@ -493,4 +407,211 @@ pub fn render_overview_tab(f: &mut Frame, area: Rect, state: &AppState) {
             f.render_widget(sparkline_paragraph, overview_chunks[chunk_idx]);
         }
     }
+}
+
+// Helper function to calculate responsive heights based on screen size
+fn calculate_responsive_heights(area: Rect) -> (u16, u16, u16) {
+    let total_height = area.height;
+
+    // Base heights
+    let base_stats_height = 10;
+    let base_calendar_height = 8; // Increased minimum for proper calendar display
+    let base_sparkline_height = 6;
+
+    if total_height <= 25 {
+        // Very small screens: use minimum heights
+        (
+            base_stats_height,
+            base_calendar_height,
+            base_sparkline_height,
+        )
+    } else if total_height <= 40 {
+        // Small screens: slight increase
+        (
+            base_stats_height,
+            base_calendar_height + 2,
+            base_sparkline_height + 1,
+        )
+    } else if total_height <= 60 {
+        // Medium screens: moderate increase - more calendar space
+        (
+            base_stats_height + 2,
+            base_calendar_height + 8,
+            base_sparkline_height + 2,
+        )
+    } else {
+        // Large screens: significant increase - much more calendar space
+        (
+            base_stats_height + 4,
+            base_calendar_height + 16,
+            base_sparkline_height + 4,
+        )
+    }
+}
+
+// Helper function to render responsive calendar
+fn render_responsive_calendar(
+    f: &mut Frame,
+    area: Rect,
+    commit_dates: &[NaiveDate],
+    theme: &Theme,
+    screen_width: u16,
+) {
+    let today = Utc::now().date_naive();
+    let mut event_store = CalendarEventStore::default();
+
+    // Determine how many months to show based on available height and width
+    // Always keep maximum 3 months per row, increase rows on larger screens
+    let months_per_row = 3; // Fixed at 3 months per row
+
+    let months_to_show: usize = if area.height < 16 {
+        3 // Small screens: only 3 months (1 row)
+    } else if area.height < 24 {
+        6 // Medium: 2 rows of 3 months
+    } else if area.height < 32 {
+        9 // Large: 3 rows of 3 months
+    } else {
+        12 // Very large: 4 rows of 3 months
+    };
+
+    let num_rows: usize = (months_to_show + months_per_row - 1) / months_per_row;
+
+    // Count commits per day to determine activity level
+    let start_date = today - chrono::Duration::days(30 * months_to_show as i64);
+    let mut commits_per_day = std::collections::HashMap::new();
+    for date in commit_dates {
+        if *date >= start_date {
+            *commits_per_day.entry(*date).or_insert(0) += 1;
+        }
+    }
+
+    // Style for non-commit days (surface color)
+    let default_style = Style::default().fg(theme.surface1).bg(theme.mantle);
+
+    // Add commit days to event store with different styles based on activity
+    for (date, commit_count) in commits_per_day {
+        let month = Month::try_from(date.month() as u8).ok();
+        let day = u8::try_from(date.day()).ok();
+        if let (Some(month), Some(day)) = (month, day) {
+            if let Ok(time_date) = Date::from_calendar_date(date.year(), month, day) {
+                let commit_style = if commit_count >= 3 {
+                    Style::default()
+                        .fg(theme.accent2())
+                        .bg(theme.mantle)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(theme.accent2()).bg(theme.mantle)
+                };
+                event_store.add(time_date, commit_style);
+            }
+        }
+    }
+
+    // Split area into rows
+    let row_constraints: Vec<Constraint> = (0..num_rows)
+        .map(|_| Constraint::Percentage(100 / num_rows as u16))
+        .collect();
+
+    let row_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(row_constraints)
+        .split(area);
+
+    // Render months in rows
+    let mut month_idx = 0;
+    for row in 0..num_rows {
+        let months_in_this_row = std::cmp::min(months_per_row, months_to_show - month_idx);
+
+        // Create constraints for this row
+        let col_constraints: Vec<Constraint> = (0..months_in_this_row)
+            .map(|_| Constraint::Percentage(100 / months_in_this_row as u16))
+            .collect();
+
+        let col_chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints(col_constraints)
+            .split(row_chunks[row]);
+
+        // Render months in this row
+        for col in 0..months_in_this_row {
+            if month_idx < months_to_show {
+                let month_date =
+                    today - chrono::Duration::days(30 * (months_to_show - month_idx - 1) as i64);
+                let year = month_date.year();
+                let month = month_date.month();
+
+                if let Ok(month_enum) = Month::try_from(month as u8) {
+                    if let Ok(time_date) = Date::from_calendar_date(year, month_enum, 1) {
+                        let cal = Monthly::new(time_date, &event_store)
+                            .default_style(default_style)
+                            .block(
+                                Block::default()
+                                    .borders(Borders::ALL)
+                                    .title(format!("{:04}-{:02}", year, month))
+                                    .title_style(theme.title_style())
+                                    .border_style(theme.border_style())
+                                    .style(theme.secondary_background_style()),
+                            );
+                        f.render_widget(cal, col_chunks[col]);
+                    }
+                }
+                month_idx += 1;
+            }
+        }
+    }
+}
+
+// Helper function to render responsive sparkline
+fn render_responsive_sparkline(
+    f: &mut Frame,
+    area: Rect,
+    commit_dates: &[NaiveDate],
+    theme: &Theme,
+    sparkline_height: u16,
+) {
+    let width = area.width.saturating_sub(2); // account for borders
+
+    // Adjust time range based on sparkline height - more height = longer time range
+    let num_days = if sparkline_height <= 6 {
+        90 // 3 months for small sparklines
+    } else if sparkline_height <= 8 {
+        180 // 6 months for medium sparklines
+    } else {
+        365 // 1 year for large sparklines
+    };
+
+    let today = Utc::now().date_naive();
+    let start_date = today - chrono::Duration::days(num_days - 1);
+    let bars = width as usize;
+    let days_per_bar = (num_days as f32 / bars as f32).ceil() as usize;
+    let mut buckets = vec![0u64; bars];
+
+    for date in commit_dates {
+        if *date >= start_date && *date <= today {
+            let days_since_start = (*date - start_date).num_days() as usize;
+            let bar_idx = (days_since_start / days_per_bar).min(bars - 1);
+            buckets[bar_idx] += 1;
+        }
+    }
+
+    let title = if num_days <= 90 {
+        "Recent Activity (last 3 months)"
+    } else if num_days <= 180 {
+        "Recent Activity (last 6 months)"
+    } else {
+        "Recent Activity (last year)"
+    };
+
+    let sparkline = Sparkline::default()
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(title)
+                .title_style(theme.title_style())
+                .border_style(theme.border_style())
+                .style(theme.secondary_background_style()),
+        )
+        .data(&buckets)
+        .style(theme.accent2_style());
+    f.render_widget(sparkline, area);
 }
