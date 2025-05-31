@@ -131,7 +131,7 @@ fn render_file_list(f: &mut Frame, area: Rect, state: &mut AppState) {
     let rows: Vec<Row> = git_status
         .iter()
         .map(|file| {
-            let is_staged = state.staged_files.contains(&file.path);
+            let is_staged = file.staged; // Use staging info from git status directly
 
             let staged_cell = Cell::from(if is_staged { "✔" } else { "○" }).style(if is_staged {
                 theme.accent3_style()
@@ -165,6 +165,9 @@ fn render_file_list(f: &mut Frame, area: Rect, state: &mut AppState) {
         theme.border_style()
     };
 
+    // Count staged files from git status
+    let staged_count = git_status.iter().filter(|f| f.staged).count();
+
     // Create the table
     let table = Table::new(
         rows,
@@ -183,7 +186,7 @@ fn render_file_list(f: &mut Frame, area: Rect, state: &mut AppState) {
             .title(format!(
                 "Files to Commit ({} total, {} staged) - [Space] to stage/unstage",
                 git_status.len(),
-                state.staged_files.len()
+                staged_count
             ))
             .title_style(theme.title_style())
             .style(theme.secondary_background_style()),
@@ -257,7 +260,8 @@ fn render_commit_area(f: &mut Frame, area: Rect, state: &mut AppState) {
     }
 
     // Render status/buttons area
-    let staged_count = state.staged_files.len();
+    let git_status = get_git_status().unwrap_or_default();
+    let staged_count = git_status.iter().filter(|f| f.staged).count();
     let status_text = if staged_count > 0 {
         format!(
             "Ready to commit {} file(s) - [Enter] to commit",
@@ -570,14 +574,13 @@ impl AppState {
             if let Some(selected_idx) = self.save_changes_table_state.selected() {
                 if selected_idx < git_status.len() {
                     let file_path = &git_status[selected_idx].path;
+                    let is_currently_staged = git_status[selected_idx].staged;
 
-                    if self.staged_files.contains(file_path) {
+                    if is_currently_staged {
                         // Unstage the file
-                        self.staged_files.retain(|p| p != file_path);
                         let _ = unstage_file(file_path);
                     } else {
                         // Stage the file
-                        self.staged_files.push(file_path.clone());
                         let _ = stage_file(file_path);
                     }
                 }
@@ -586,7 +589,11 @@ impl AppState {
     }
 
     pub fn commit_staged_files(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        if self.staged_files.is_empty() {
+        // Check if there are any staged files from git status
+        let git_status = get_git_status().unwrap_or_default();
+        let staged_count = git_status.iter().filter(|f| f.staged).count();
+
+        if staged_count == 0 {
             return Err("No files staged for commit".into());
         }
 
@@ -598,8 +605,7 @@ impl AppState {
         // Perform the commit
         commit(&commit_message)?;
 
-        // Clear staged files and commit message
-        self.staged_files.clear();
+        // Clear commit message
         self.commit_message = tui_textarea::TextArea::new(vec![String::new()]);
 
         Ok(())

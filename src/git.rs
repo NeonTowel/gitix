@@ -60,117 +60,90 @@ pub fn init_repo() -> Result<(), gix::init::Error> {
 }
 
 pub fn get_git_status() -> Result<Vec<GitFileStatus>, Box<dyn std::error::Error>> {
-    let repo = gix::open(".")?;
+    // Use git status --porcelain to get both staged and unstaged changes
+    let output = std::process::Command::new("git")
+        .arg("status")
+        .arg("--porcelain")
+        .output()?;
 
-    // Check if repository has a worktree
-    let worktree_root = repo.work_dir().ok_or("Repository has no worktree")?;
-
-    let mut files = Vec::new();
-
-    // Get the index
-    let index = repo.index()?;
-
-    // Load gitignore patterns if available
-    let gitignore_patterns = load_gitignore_patterns(worktree_root);
-
-    // Recursively walk through all files in the worktree
-    fn walk_dir(
-        dir: &std::path::Path,
-        worktree_root: &std::path::Path,
-        index: &gix::index::File,
-        files: &mut Vec<GitFileStatus>,
-        gitignore_patterns: &[String],
-    ) -> std::io::Result<()> {
-        for entry in std::fs::read_dir(dir)? {
-            let entry = entry?;
-            let path = entry.path();
-
-            // Skip .git directory and target directory entirely
-            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                if name == ".git" || name == "target" {
-                    continue;
-                }
-            }
-
-            if path.is_dir() {
-                // Recursively walk subdirectories
-                walk_dir(&path, worktree_root, index, files, gitignore_patterns)?;
-            } else if path.is_file() {
-                let relative_path = path.strip_prefix(worktree_root).unwrap_or(&path);
-                let path_str = relative_path.to_string_lossy();
-
-                // Convert to forward slashes for git compatibility
-                let git_path = path_str.replace('\\', "/");
-
-                // Skip if file matches gitignore patterns
-                if is_ignored(&git_path, gitignore_patterns) {
-                    continue;
-                }
-
-                // Skip common ignore patterns
-                if git_path.ends_with(".tmp")
-                    || git_path.ends_with("~")
-                    || git_path.starts_with("target/")
-                    || git_path.contains("/.git/")
-                {
-                    continue;
-                }
-
-                let path_bstr = gix::bstr::BStr::new(git_path.as_bytes());
-
-                // Get file size
-                let file_size = std::fs::metadata(&path).ok().map(|m| m.len());
-
-                // Check if file is tracked in the index
-                let is_tracked = index.entry_by_path(path_bstr).is_some();
-
-                if !is_tracked {
-                    // File is untracked
-                    files.push(GitFileStatus {
-                        path: std::path::PathBuf::from(relative_path),
-                        status: FileStatusType::Untracked,
-                        file_size,
-                        staged: false,
-                    });
-                } else {
-                    // For tracked files, do a modification check
-                    if let Ok(metadata) = std::fs::metadata(&path) {
-                        if let Ok(modified) = metadata.modified() {
-                            if let Some(entry) = index.entry_by_path(path_bstr) {
-                                let entry_mtime = entry.stat.mtime.secs;
-                                let file_mtime = modified
-                                    .duration_since(std::time::UNIX_EPOCH)
-                                    .unwrap_or_default()
-                                    .as_secs()
-                                    as u32;
-
-                                // Check if file is newer than index entry
-                                if file_mtime > entry_mtime {
-                                    files.push(GitFileStatus {
-                                        path: std::path::PathBuf::from(relative_path),
-                                        status: FileStatusType::Modified,
-                                        file_size,
-                                        staged: false,
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        Ok(())
+    if !output.status.success() {
+        return Err(format!(
+            "Failed to get git status: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )
+        .into());
     }
 
-    // Start the recursive walk from the worktree root
-    walk_dir(
-        worktree_root,
-        worktree_root,
-        &index,
-        &mut files,
-        &gitignore_patterns,
-    )
-    .ok();
+    let mut files = Vec::new();
+    let status_output = String::from_utf8_lossy(&output.stdout);
+
+    for line in status_output.lines() {
+        if line.len() < 3 {
+            continue;
+        }
+
+        let index_status = line.chars().nth(0).unwrap_or(' ');
+        let worktree_status = line.chars().nth(1).unwrap_or(' ');
+        let file_path = &line[3..]; // Skip the two status characters and space
+
+        let path = std::path::PathBuf::from(file_path);
+
+        // Get file size if the file exists
+        let file_size = std::fs::metadata(&path).ok().map(|m| m.len());
+
+        // Determine if file is staged (has changes in index)
+        let staged = index_status != ' ' && index_status != '?';
+
+        // Determine the primary status to show
+        let (status, is_staged) = if staged && worktree_status == ' ' {
+            // File is staged and clean in worktree - show as staged
+            match index_status {
+                'A' => (FileStatusType::Added, true),
+                'M' => (FileStatusType::Modified, true),
+                'D' => (FileStatusType::Deleted, true),
+                'R' => (
+                    FileStatusType::Renamed {
+                        from: "".to_string(),
+                    },
+                    true,
+                ),
+                'T' => (FileStatusType::TypeChange, true),
+                _ => (FileStatusType::Modified, true),
+            }
+        } else if worktree_status != ' ' {
+            // File has changes in worktree - show worktree status
+            match worktree_status {
+                'M' => (FileStatusType::Modified, false),
+                'D' => (FileStatusType::Deleted, false),
+                '?' => (FileStatusType::Untracked, false),
+                _ => (FileStatusType::Modified, false),
+            }
+        } else if staged {
+            // File is staged but we prefer to show it as staged
+            match index_status {
+                'A' => (FileStatusType::Added, true),
+                'M' => (FileStatusType::Modified, true),
+                'D' => (FileStatusType::Deleted, true),
+                'R' => (
+                    FileStatusType::Renamed {
+                        from: "".to_string(),
+                    },
+                    true,
+                ),
+                'T' => (FileStatusType::TypeChange, true),
+                _ => (FileStatusType::Modified, true),
+            }
+        } else {
+            continue; // Skip files with no changes
+        };
+
+        files.push(GitFileStatus {
+            path,
+            status,
+            file_size,
+            staged: is_staged,
+        });
+    }
 
     Ok(files)
 }
@@ -225,23 +198,61 @@ fn is_ignored(path: &str, patterns: &[String]) -> bool {
 }
 
 pub fn stage_file(file_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
-    // For now, we'll implement a simple version
-    // TODO: Implement proper staging using gix
-    //println!("Staging file: {:?}", file_path);
+    // For now, use git command directly until we can figure out the correct gix API
+    let output = std::process::Command::new("git")
+        .arg("add")
+        .arg(file_path)
+        .output()?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "Failed to stage file: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )
+        .into());
+    }
+
     Ok(())
 }
 
 pub fn unstage_file(file_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
-    // For now, we'll implement a simple version
-    // TODO: Implement proper unstaging using gix
-    //println!("Unstaging file: {:?}", file_path);
+    // For now, use git command directly until we can figure out the correct gix API
+    let output = std::process::Command::new("git")
+        .arg("reset")
+        .arg("HEAD")
+        .arg("--")
+        .arg(file_path)
+        .output()?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "Failed to unstage file: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )
+        .into());
+    }
+
     Ok(())
 }
 
 pub fn commit(message: &str) -> Result<(), Box<dyn std::error::Error>> {
-    // For now, we'll implement a simple version
-    // TODO: Implement proper commit creation using gix
-    //println!("Creating commit with message: {}", message);
+    // For now, use git command directly until we can figure out the correct gix API
+    let output = std::process::Command::new("git")
+        .arg("commit")
+        .arg("-m")
+        .arg(message)
+        .output()?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "Failed to create commit: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )
+        .into());
+    }
+
+    println!("Created commit successfully");
+
     Ok(())
 }
 
