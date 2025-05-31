@@ -5,7 +5,8 @@ mod settings;
 mod status;
 mod update;
 
-use crate::app::AppState;
+use crate::app::{AppState, SaveChangesFocus};
+use crate::git::get_git_status;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -119,6 +120,7 @@ pub fn start_tui(state: &mut AppState) {
                 let hints = match active_tab {
                     1 => "[Tab] Next Tab  [Shift+Tab] Previous Tab  [↑↓] Navigate  [Enter] Open  [q] Quit",
                     2 if state.git_enabled => "[Tab] Next Tab  [Shift+Tab] Previous Tab  [↑↓] Navigate Files  [q] Quit",
+                    3 if state.git_enabled => "[Tab] Next Tab  [↑↓] Navigate  [Space] Stage/Unstage  [Enter] Commit  [q] Quit",
                     _ => "[Tab] Next Tab  [Shift+Tab] Previous Tab  [q] Quit",
                 };
                 let hint_paragraph = Paragraph::new(hints)
@@ -189,7 +191,7 @@ pub fn start_tui(state: &mut AppState) {
                         }
                         (KeyCode::Down, _) if active_tab == 2 => {
                             // Status tab: move selection down
-                            if let Ok(git_status) = crate::tui::status::get_git_status() {
+                            if let Ok(git_status) = get_git_status() {
                                 if !git_status.is_empty() {
                                     let current = state.status_table_state.selected().unwrap_or(0);
                                     let next = (current + 1).min(git_status.len() - 1);
@@ -199,7 +201,7 @@ pub fn start_tui(state: &mut AppState) {
                         }
                         (KeyCode::Up, _) if active_tab == 2 => {
                             // Status tab: move selection up
-                            if let Ok(git_status) = crate::tui::status::get_git_status() {
+                            if let Ok(git_status) = get_git_status() {
                                 if !git_status.is_empty() {
                                     let current = state.status_table_state.selected().unwrap_or(0);
                                     let prev = current.saturating_sub(1);
@@ -247,6 +249,47 @@ pub fn start_tui(state: &mut AppState) {
                                     let _ =
                                         std::process::Command::new("vi").arg(&file_path).status();
                                 }
+                            }
+                        }
+                        (KeyCode::Down, _) if active_tab == 3 => {
+                            // Save changes tab: seamless navigation down
+                            state.save_changes_navigate_down();
+                        }
+                        (KeyCode::Up, _) if active_tab == 3 => {
+                            // Save changes tab: seamless navigation up
+                            state.save_changes_navigate_up();
+                        }
+                        (KeyCode::Char(' '), _) if active_tab == 3 => {
+                            // Save changes tab: toggle file staging (only works when in file list)
+                            if state.save_changes_focus == SaveChangesFocus::FileList {
+                                state.toggle_file_staging();
+                            }
+                        }
+                        (KeyCode::Enter, _) if active_tab == 3 => {
+                            // Save changes tab: commit staged files (only works when in file list)
+                            if state.save_changes_focus == SaveChangesFocus::FileList {
+                                if let Err(e) = state.commit_staged_files() {
+                                    // TODO: Show error message in UI
+                                    eprintln!("Commit failed: {}", e);
+                                }
+                            } else {
+                                // In commit message area, add a new line
+                                state.commit_message.insert_newline();
+                            }
+                        }
+                        // Handle commit message input when focused on commit message
+                        _ if active_tab == 3
+                            && state.save_changes_focus == SaveChangesFocus::CommitMessage =>
+                        {
+                            // For now, basic character input - more complex input handling can be added later
+                            match key_event.code {
+                                KeyCode::Char(c) => {
+                                    state.commit_message.insert_char(c);
+                                }
+                                KeyCode::Backspace => {
+                                    state.commit_message.delete_char();
+                                }
+                                _ => {}
                             }
                         }
                         _ => {}
