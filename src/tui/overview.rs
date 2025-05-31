@@ -8,16 +8,57 @@ use ratatui::{Frame, layout::Rect};
 use time::{Date, Month};
 
 pub fn render_overview_tab(f: &mut Frame, area: Rect, state: &AppState) {
+    // Define minimum heights for each component
+    const STATS_HEIGHT: u16 = 10;
+    const CALENDAR_HEIGHT: u16 = 7;
+    const SPARKLINE_HEIGHT: u16 = 6;
+    const LABEL_HEIGHT: u16 = 1;
+
+    // Calculate minimum total height needed for all components
+    let min_height_all = STATS_HEIGHT + CALENDAR_HEIGHT + SPARKLINE_HEIGHT + LABEL_HEIGHT;
+    let min_height_with_sparkline = STATS_HEIGHT + SPARKLINE_HEIGHT + LABEL_HEIGHT;
+    let min_height_stats_only = STATS_HEIGHT + LABEL_HEIGHT;
+
+    // Determine what components to show based on available height
+    let show_calendar = area.height >= min_height_all;
+    let show_sparkline = area.height >= min_height_with_sparkline;
+    let show_stats = area.height >= min_height_stats_only;
+
+    // Build constraints based on what we can show
+    let mut constraints = Vec::new();
+
+    if show_stats {
+        constraints.push(Constraint::Length(STATS_HEIGHT));
+    }
+
+    if show_calendar {
+        constraints.push(Constraint::Length(CALENDAR_HEIGHT));
+    }
+
+    if show_sparkline {
+        constraints.push(Constraint::Length(SPARKLINE_HEIGHT));
+    }
+
+    if show_stats || show_calendar || show_sparkline {
+        constraints.push(Constraint::Length(LABEL_HEIGHT));
+        constraints.push(Constraint::Min(0)); // filler
+    }
+
+    // If we can't show anything meaningful, just show a message
+    if !show_stats {
+        let too_small_paragraph = Paragraph::new("Terminal too small - resize to view overview")
+            .alignment(Alignment::Center)
+            .block(Block::default().borders(Borders::ALL).title("Overview"));
+        f.render_widget(too_small_paragraph, area);
+        return;
+    }
+
     let overview_chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(5),  // stats row
-            Constraint::Length(10), // calendar
-            Constraint::Length(8),  // sparkline
-            Constraint::Length(1),  // combined label (date hints + direction)
-            Constraint::Min(0),     // filler
-        ])
+        .constraints(constraints)
         .split(area);
+
+    let mut chunk_idx = 0;
 
     // --- Repo stats logic ---
     let (num_commits, num_branches, latest_author, commit_dates): (
@@ -109,130 +150,200 @@ pub fn render_overview_tab(f: &mut Frame, area: Rect, state: &AppState) {
         (None, None, None, Vec::new())
     };
 
-    // Stats row
-    let mut stats_lines = vec![];
-    if let Some(n) = num_commits {
-        stats_lines.push(format!("Commits: {}", n));
-    }
-    if let Some(n) = num_branches {
-        stats_lines.push(format!("Branches: {}", n));
-    }
-    if let Some(ref author) = latest_author {
-        stats_lines.push(format!("Latest Author: {}", author));
-    }
-    let stats_text = if stats_lines.is_empty() {
-        "No repository stats available".to_string()
-    } else {
-        stats_lines.join("    |    ")
-    };
-    let stats_paragraph = Paragraph::new(stats_text)
-        .alignment(Alignment::Center)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("Repository Stats"),
-        );
-    f.render_widget(stats_paragraph, overview_chunks[0]);
+    // Stats row (always shown if we have minimum height)
+    if show_stats {
+        // Split the stats area into two parts: stats line and commit history
+        let stats_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3), // Stats line (with borders)
+                Constraint::Min(0),    // Commit history (remaining space)
+            ])
+            .split(overview_chunks[chunk_idx]);
 
-    // --- Calendar for last 3 months ---
-    if state.git_enabled && !commit_dates.is_empty() {
-        // Build event store for last 3 months
-        let today = Utc::now().date_naive();
-        let three_months_ago = today - chrono::Duration::days(90);
-        let mut event_store = CalendarEventStore::default();
-        // Style for commit days (bright green)
-        let commit_style = Style::default()
-            .fg(Color::Green)
-            .bg(Color::Black)
-            .add_modifier(Modifier::BOLD);
-        // Style for non-commit days (dimmed almost black)
-        let default_style = Style::default()
-            .fg(Color::Rgb(20, 20, 20))
-            .bg(Color::Black)
-            .add_modifier(Modifier::DIM);
-        // Add commit days to event store
-        for date in &commit_dates {
-            if *date >= three_months_ago {
-                let month = Month::try_from(date.month() as u8).ok();
-                let day = u8::try_from(date.day()).ok();
-                if let (Some(month), Some(day)) = (month, day) {
-                    if let Ok(time_date) = Date::from_calendar_date(date.year(), month, day) {
-                        event_store.add(time_date, commit_style);
+        // Repository stats line (centered)
+        let mut stats_lines = vec![];
+        if let Some(n) = num_commits {
+            stats_lines.push(format!("Commits: {}", n));
+        }
+        if let Some(n) = num_branches {
+            stats_lines.push(format!("Branches: {}", n));
+        }
+        if let Some(ref author) = latest_author {
+            stats_lines.push(format!("Latest Author: {}", author));
+        }
+        let stats_text = if stats_lines.is_empty() {
+            "No repository stats available".to_string()
+        } else {
+            stats_lines.join("    |    ")
+        };
+
+        let stats_paragraph = Paragraph::new(stats_text)
+            .alignment(Alignment::Center)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Repository Stats"),
+            );
+        f.render_widget(stats_paragraph, stats_chunks[0]);
+
+        // Mock commit history data (TODO: replace with real data)
+        let mock_commits = vec![
+            (
+                "feat: add responsive overview layout",
+                "John Doe",
+                "2 minutes ago",
+            ),
+            (
+                "fix: calendar widget height adjustment",
+                "Jane Smith",
+                "15 minutes ago",
+            ),
+            (
+                "docs: update README with new features",
+                "Bob Wilson",
+                "1 hour ago",
+            ),
+            (
+                "refactor: improve git repository handling",
+                "Alice Brown",
+                "3 hours ago",
+            ),
+            ("chore: update dependencies", "Charlie Davis", "2024-01-15"),
+        ];
+
+        // Build commit history text (left-aligned within centered block)
+        let mut commit_text = String::new();
+        for (message, author, time) in &mock_commits {
+            // Truncate commit message if too long
+            let truncated_message = if message.len() > 50 {
+                format!("{}...", &message[..47])
+            } else {
+                message.to_string()
+            };
+
+            if !commit_text.is_empty() {
+                commit_text.push('\n');
+            }
+            commit_text.push_str(&format!("• {} - {} ({})", truncated_message, author, time));
+        }
+
+        let commit_paragraph = Paragraph::new(commit_text)
+            .alignment(Alignment::Left)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Recent Changes"),
+            );
+        f.render_widget(commit_paragraph, stats_chunks[1]);
+
+        chunk_idx += 1;
+    }
+
+    // --- Calendar for last 3 months (only if we have enough space) ---
+    if show_calendar {
+        if state.git_enabled && !commit_dates.is_empty() {
+            // Build event store for last 3 months
+            let today = Utc::now().date_naive();
+            let three_months_ago = today - chrono::Duration::days(90);
+            let mut event_store = CalendarEventStore::default();
+            // Style for commit days (bright green)
+            let commit_style = Style::default()
+                .fg(Color::Green)
+                .bg(Color::Black)
+                .add_modifier(Modifier::BOLD);
+            // Style for non-commit days (dimmed almost black)
+            let default_style = Style::default()
+                .fg(Color::Rgb(20, 20, 20))
+                .bg(Color::Black)
+                .add_modifier(Modifier::DIM);
+            // Add commit days to event store
+            for date in &commit_dates {
+                if *date >= three_months_ago {
+                    let month = Month::try_from(date.month() as u8).ok();
+                    let day = u8::try_from(date.day()).ok();
+                    if let (Some(month), Some(day)) = (month, day) {
+                        if let Ok(time_date) = Date::from_calendar_date(date.year(), month, day) {
+                            event_store.add(time_date, commit_style);
+                        }
                     }
                 }
             }
-        }
-        // Render 3 months horizontally
-        let mut months = vec![];
-        for offset in (0..3).rev() {
-            let month_date = today - chrono::Duration::days(30 * offset);
-            let year = month_date.year();
-            let month = month_date.month();
-            if let Ok(month_enum) = Month::try_from(month as u8) {
-                if let Ok(time_date) = Date::from_calendar_date(year, month_enum, 1) {
-                    let cal = Monthly::new(time_date, &event_store)
-                        .default_style(default_style)
-                        .block(
-                            Block::default()
-                                .borders(Borders::ALL)
-                                .title(format!("{:04}-{:02}", year, month)),
-                        );
-                    months.push(cal);
+            // Render 3 months horizontally
+            let mut months = vec![];
+            for offset in (0..3).rev() {
+                let month_date = today - chrono::Duration::days(30 * offset);
+                let year = month_date.year();
+                let month = month_date.month();
+                if let Ok(month_enum) = Month::try_from(month as u8) {
+                    if let Ok(time_date) = Date::from_calendar_date(year, month_enum, 1) {
+                        let cal = Monthly::new(time_date, &event_store)
+                            .default_style(default_style)
+                            .block(
+                                Block::default()
+                                    .borders(Borders::ALL)
+                                    .title(format!("{:04}-{:02}", year, month)),
+                            );
+                        months.push(cal);
+                    }
                 }
             }
+            let cal_chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Percentage(33),
+                    Constraint::Percentage(33),
+                    Constraint::Percentage(34),
+                ])
+                .split(overview_chunks[chunk_idx]);
+            for (i, cal) in months.into_iter().enumerate() {
+                f.render_widget(cal, cal_chunks[i]);
+            }
+        } else {
+            let calendar_paragraph = Paragraph::new("Calendar (last 3 months): [no data]")
+                .alignment(Alignment::Center)
+                .block(Block::default().borders(Borders::ALL).title("Calendar"));
+            f.render_widget(calendar_paragraph, overview_chunks[chunk_idx]);
         }
-        let cal_chunks = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Percentage(33),
-                Constraint::Percentage(33),
-                Constraint::Percentage(34),
-            ])
-            .split(overview_chunks[1]);
-        for (i, cal) in months.into_iter().enumerate() {
-            f.render_widget(cal, cal_chunks[i]);
-        }
-    } else {
-        let calendar_paragraph = Paragraph::new("Calendar (last 3 months): [no data]")
-            .alignment(Alignment::Center)
-            .block(Block::default().borders(Borders::ALL).title("Calendar"));
-        f.render_widget(calendar_paragraph, overview_chunks[1]);
+        chunk_idx += 1;
     }
 
-    // Sparkline for commit activity (histogram by day, spanning full width)
-    if state.git_enabled && !commit_dates.is_empty() {
-        let sparkline_area = overview_chunks[2];
-        let width = sparkline_area.width.saturating_sub(2); // account for borders
-        let num_days = 90;
-        let today = Utc::now().date_naive();
-        let start_date = today - chrono::Duration::days(num_days - 1);
-        let bars = width as usize;
-        let days_per_bar = (num_days as f32 / bars as f32).ceil() as usize;
-        let mut buckets = vec![0u64; bars];
-        for date in &commit_dates {
-            if *date >= start_date && *date <= today {
-                let days_since_start = (*date - start_date).num_days() as usize;
-                let bar_idx = (days_since_start / days_per_bar).min(bars - 1);
-                buckets[bar_idx] += 1;
+    // Sparkline for commit activity (only if we have enough space)
+    if show_sparkline {
+        if state.git_enabled && !commit_dates.is_empty() {
+            let sparkline_area = overview_chunks[chunk_idx];
+            let width = sparkline_area.width.saturating_sub(2); // account for borders
+            let num_days = 90;
+            let today = Utc::now().date_naive();
+            let start_date = today - chrono::Duration::days(num_days - 1);
+            let bars = width as usize;
+            let days_per_bar = (num_days as f32 / bars as f32).ceil() as usize;
+            let mut buckets = vec![0u64; bars];
+            for date in &commit_dates {
+                if *date >= start_date && *date <= today {
+                    let days_since_start = (*date - start_date).num_days() as usize;
+                    let bar_idx = (days_since_start / days_per_bar).min(bars - 1);
+                    buckets[bar_idx] += 1;
+                }
             }
+            let sparkline = Sparkline::default()
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("Recent Activity (last 3 months)"),
+                )
+                .data(&buckets)
+                .style(Style::default().fg(Color::Green));
+            f.render_widget(sparkline, sparkline_area);
+        } else {
+            let sparkline_paragraph = Paragraph::new("Recent Activity: [no data]")
+                .alignment(Alignment::Center)
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("Recent Activity"),
+                );
+            f.render_widget(sparkline_paragraph, overview_chunks[chunk_idx]);
         }
-        let sparkline = Sparkline::default()
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title("Commit Activity (last 3 months)"),
-            )
-            .data(&buckets)
-            .style(Style::default().fg(Color::Green));
-        f.render_widget(sparkline, sparkline_area);
-    } else {
-        let sparkline_paragraph = Paragraph::new("Commit Activity Sparkline: [no data]")
-            .alignment(Alignment::Center)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title("Commit Activity"),
-            );
-        f.render_widget(sparkline_paragraph, overview_chunks[2]);
     }
 }
