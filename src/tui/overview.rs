@@ -2,10 +2,93 @@ use crate::app::AppState;
 use chrono::{Datelike, NaiveDate, Utc};
 use ratatui::layout::{Alignment, Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
 use ratatui::widgets::calendar::{CalendarEventStore, Monthly};
 use ratatui::widgets::{Block, Borders, Paragraph, Sparkline};
 use ratatui::{Frame, layout::Rect};
 use time::{Date, Month};
+
+// Helper struct for commit information
+#[derive(Debug, Clone)]
+struct CommitInfo {
+    message: String,
+    author: String,
+    timestamp: i64,
+}
+
+// Helper function to get recent commits from repository
+fn get_recent_commits(repo_root: &std::path::Path, limit: usize) -> Vec<CommitInfo> {
+    let mut commits = Vec::new();
+
+    if let Ok(repo) = gix::open(repo_root) {
+        if let Ok(head) = repo.head_ref() {
+            if let Some(head) = head {
+                if let Some(oid) = head.target().try_id() {
+                    if let Ok(obj) = repo.find_object(oid) {
+                        if let Ok(commit) = obj.try_into_commit() {
+                            if let Ok(walk) = commit.ancestors().all() {
+                                for info in walk.filter_map(Result::ok).take(limit) {
+                                    let oid = info.id();
+                                    if let Ok(obj) = repo.find_object(oid) {
+                                        if let Ok(commit_obj) = obj.try_into_commit() {
+                                            if let (Ok(message), Ok(author), Ok(time)) = (
+                                                commit_obj.message(),
+                                                commit_obj.author(),
+                                                commit_obj.time(),
+                                            ) {
+                                                let message_str = message.title.to_string();
+                                                let author_str = format!("{}", author.name);
+
+                                                commits.push(CommitInfo {
+                                                    message: message_str,
+                                                    author: author_str,
+                                                    timestamp: time.seconds,
+                                                });
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    commits
+}
+
+// Helper function to format relative time
+fn format_relative_time(timestamp: i64) -> String {
+    let now = Utc::now().timestamp();
+    let diff = now - timestamp;
+
+    if diff < 60 {
+        "just now".to_string()
+    } else if diff < 3600 {
+        let minutes = diff / 60;
+        if minutes == 1 {
+            "1 minute ago".to_string()
+        } else {
+            format!("{} minutes ago", minutes)
+        }
+    } else if diff < 86400 {
+        let hours = diff / 3600;
+        if hours == 1 {
+            "1 hour ago".to_string()
+        } else {
+            format!("{} hours ago", hours)
+        }
+    } else {
+        // For commits older than a day, show the date
+        if let Some(naive) = chrono::NaiveDateTime::from_timestamp_opt(timestamp, 0) {
+            naive.format("%Y-%m-%d").to_string()
+        } else {
+            "unknown date".to_string()
+        }
+    }
+}
 
 pub fn render_overview_tab(f: &mut Frame, area: Rect, state: &AppState) {
     // Define minimum heights for each component
@@ -187,48 +270,43 @@ pub fn render_overview_tab(f: &mut Frame, area: Rect, state: &AppState) {
             );
         f.render_widget(stats_paragraph, stats_chunks[0]);
 
-        // Mock commit history data (TODO: replace with real data)
-        let mock_commits = vec![
-            (
-                "feat: add responsive overview layout",
-                "John Doe",
-                "2 minutes ago",
-            ),
-            (
-                "fix: calendar widget height adjustment",
-                "Jane Smith",
-                "15 minutes ago",
-            ),
-            (
-                "docs: update README with new features",
-                "Bob Wilson",
-                "1 hour ago",
-            ),
-            (
-                "refactor: improve git repository handling",
-                "Alice Brown",
-                "3 hours ago",
-            ),
-            ("chore: update dependencies", "Charlie Davis", "2024-01-15"),
-        ];
-
-        // Build commit history text (left-aligned within centered block)
-        let mut commit_text = String::new();
-        for (message, author, time) in &mock_commits {
-            // Truncate commit message if too long
-            let truncated_message = if message.len() > 50 {
-                format!("{}...", &message[..47])
+        // Get real commit history data
+        let recent_commits = if state.git_enabled {
+            if let Some(repo_root) = &state.repo_root {
+                get_recent_commits(repo_root, 5)
             } else {
-                message.to_string()
-            };
-
-            if !commit_text.is_empty() {
-                commit_text.push('\n');
+                Vec::new()
             }
-            commit_text.push_str(&format!("• {} - {} ({})", truncated_message, author, time));
+        } else {
+            Vec::new()
+        };
+
+        // Build commit history with colored spans
+        let mut commit_lines = Vec::new();
+
+        if recent_commits.is_empty() {
+            commit_lines.push(Line::from(Span::styled(
+                "No recent commits found",
+                Style::default().fg(Color::Gray),
+            )));
+        } else {
+            for commit in &recent_commits {
+                let relative_time = format_relative_time(commit.timestamp);
+
+                let line = Line::from(vec![
+                    Span::raw("• "),
+                    Span::styled(&commit.message, Style::default().fg(Color::White)),
+                    Span::raw(" - "),
+                    Span::styled(&commit.author, Style::default().fg(Color::Cyan)),
+                    Span::raw(" ("),
+                    Span::styled(relative_time, Style::default().fg(Color::Yellow)),
+                    Span::raw(")"),
+                ]);
+                commit_lines.push(line);
+            }
         }
 
-        let commit_paragraph = Paragraph::new(commit_text)
+        let commit_paragraph = Paragraph::new(commit_lines)
             .alignment(Alignment::Left)
             .block(
                 Block::default()
