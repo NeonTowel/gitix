@@ -1,4 +1,4 @@
-use crate::app::{AppState, AuthorFocus, SettingsFocus, ThemeFocus};
+use crate::app::{AppState, AuthorFocus, GitFocus, SettingsFocus, ThemeFocus};
 use crate::tui::theme::{AccentColor, Theme, TitleColor};
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Margin};
 use ratatui::style::{Color, Modifier, Style};
@@ -32,10 +32,14 @@ pub fn render_settings_tab(f: &mut Frame, area: Rect, state: &AppState) {
         .constraints([Constraint::Min(1), Constraint::Length(3)])
         .split(area);
 
-    // Split main area into two columns: Author and Theme
+    // Split main area into three columns: Author, Theme, and Git
     let content_chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .constraints([
+            Constraint::Percentage(33), // Author
+            Constraint::Percentage(33), // Theme
+            Constraint::Percentage(34), // Git
+        ])
         .margin(1)
         .split(main_chunks[0]);
 
@@ -44,6 +48,9 @@ pub fn render_settings_tab(f: &mut Frame, area: Rect, state: &AppState) {
 
     // Render Theme panel
     render_theme_panel(f, content_chunks[1], state, &theme);
+
+    // Render Git panel
+    render_git_panel(f, content_chunks[2], state, &theme);
 
     // Render status bar
     render_status_bar(f, main_chunks[1], state, &theme);
@@ -482,6 +489,12 @@ fn render_status_bar(f: &mut Frame, area: Rect, state: &AppState, theme: &Theme)
                     "←/→: Change title color • ↑/↓: Switch option • Ctrl+←/→: Switch panel • Ctrl+S: Save".to_string()
                 }
             },
+            SettingsFocus::Git => match state.settings_git_focus {
+                GitFocus::PullRebase => {
+                    "←/→: Toggle pull strategy • Ctrl+←/→: Switch panel • Ctrl+S: Save"
+                        .to_string()
+                }
+            },
         }
     };
 
@@ -529,4 +542,111 @@ fn render_no_git_message(f: &mut Frame, area: Rect, theme: &Theme) {
             .style(theme.secondary_background_style()),
     );
     f.render_widget(message, area);
+}
+
+fn render_git_panel(f: &mut Frame, area: Rect, state: &AppState, theme: &Theme) {
+    let is_focused = state.settings_focus == SettingsFocus::Git;
+
+    let border_style = if is_focused {
+        theme.focused_border_style()
+    } else {
+        theme.border_style()
+    };
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title("Git Configuration")
+        .title_style(theme.title_style())
+        .border_style(border_style)
+        .style(theme.secondary_background_style());
+
+    let inner_area = block.inner(area);
+    f.render_widget(block, area);
+
+    // Split into pull rebase section and help text
+    let git_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3), // Pull rebase setting
+            Constraint::Min(1),    // Help text
+        ])
+        .margin(1)
+        .split(inner_area);
+
+    // Pull rebase setting
+    let pull_rebase_focused = is_focused && state.settings_git_focus == GitFocus::PullRebase;
+
+    let pull_rebase_block = Block::default()
+        .borders(Borders::ALL)
+        .title("Pull Strategy")
+        .title_style(if pull_rebase_focused {
+            theme.accent_style()
+        } else {
+            theme.secondary_text_style()
+        })
+        .border_style(if pull_rebase_focused {
+            theme.focused_border_style()
+        } else {
+            theme.border_style()
+        })
+        .style(theme.secondary_background_style());
+
+    f.render_widget(pull_rebase_block, git_chunks[0]);
+
+    // Render pull rebase content
+    let pull_rebase_inner = git_chunks[0].inner(Margin {
+        vertical: 1,
+        horizontal: 1,
+    });
+
+    let rebase_text = if state.pull_rebase { "Rebase" } else { "Merge" };
+    let rebase_style = if pull_rebase_focused {
+        Style::default()
+            .fg(theme.accent())
+            .add_modifier(Modifier::BOLD)
+    } else {
+        theme.text_style()
+    };
+
+    let rebase_paragraph = Paragraph::new(Span::styled(rebase_text, rebase_style));
+    f.render_widget(rebase_paragraph, pull_rebase_inner);
+
+    // Help text
+    let help_lines = vec![
+        Line::from(vec![Span::styled(
+            "Git behavior configuration",
+            theme.secondary_text_style(),
+        )]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("Pull Strategy: ", theme.stats_label_style()),
+            Span::styled(
+                "How to integrate remote changes",
+                theme.secondary_text_style(),
+            ),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("• Rebase: ", theme.accent2_style()),
+            Span::styled(
+                "Replay local commits on top of remote",
+                theme.secondary_text_style(),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("• Merge: ", theme.accent2_style()),
+            Span::styled(
+                "Create merge commit for integration",
+                theme.secondary_text_style(),
+            ),
+        ]),
+        Line::from(""),
+        Line::from(vec![Span::styled(
+            "Use ←→ to change, Ctrl+S to save",
+            theme.muted_text_style(),
+        )]),
+    ];
+
+    let help_paragraph = Paragraph::new(help_lines).wrap(Wrap { trim: false });
+    f.render_widget(help_paragraph, git_chunks[1]);
 }

@@ -142,6 +142,25 @@ pub fn get_theme_title_color() -> Result<Option<TitleColor>, ConfigError> {
     }
 }
 
+/// Set gitix pull rebase setting in local repository config
+pub fn set_pull_rebase(rebase: bool) -> Result<(), ConfigError> {
+    let repo = Repository::open(".")?;
+    let mut config = repo.config()?;
+    config.set_bool("gitix.pull.rebase", rebase)?;
+    Ok(())
+}
+
+/// Get gitix pull rebase setting from repository config
+pub fn get_pull_rebase() -> Result<Option<bool>, ConfigError> {
+    let repo = Repository::open(".")?;
+    let config = repo.config()?;
+    match config.get_bool("gitix.pull.rebase") {
+        Ok(rebase) => Ok(Some(rebase)),
+        Err(e) if e.code() == git2::ErrorCode::NotFound => Ok(None),
+        Err(e) => Err(ConfigError::Git2(e)),
+    }
+}
+
 /// Convert AccentColor to string for storage
 fn accent_color_to_string(accent: AccentColor) -> String {
     match accent {

@@ -27,6 +27,7 @@ pub struct AppState {
     pub settings_focus: SettingsFocus, // Which settings section has focus
     pub settings_author_focus: AuthorFocus, // Which author field has focus
     pub settings_theme_focus: ThemeFocus, // Which theme setting has focus
+    pub settings_git_focus: GitFocus,  // Which git setting has focus
     pub user_name_input: TextArea<'static>, // User name input field
     pub user_email_input: TextArea<'static>, // User email input field
     pub current_theme_accent: AccentColor, // Current primary accent color
@@ -35,6 +36,9 @@ pub struct AppState {
     pub current_theme_title: TitleColor, // Current title color
     pub settings_status_message: Option<String>, // Status message for settings operations
 
+    // Git configuration
+    pub pull_rebase: bool, // Whether to use rebase when pulling (gitix.pull.rebase)
+
     // Git status caching for save changes tab
     pub save_changes_git_status: Vec<crate::git::GitFileStatus>, // Cached git status for save changes tab
     pub save_changes_git_status_loaded: bool, // Whether git status has been loaded for save changes tab
@@ -42,6 +46,15 @@ pub struct AppState {
     // Git status caching for files tab (reused from old status tab)
     pub status_git_status: Vec<crate::git::GitFileStatus>, // Cached git status for files tab
     pub status_git_status_loaded: bool, // Whether git status has been loaded for files tab
+
+    // Update tab state
+    pub update_remote_status: Option<crate::git::RemoteStatus>, // Cached remote status
+    pub update_recent_operations: Vec<crate::git::SyncOperation>, // Recent sync operations
+
+    // Error popup state
+    pub show_error_popup: bool,      // Whether to show error popup
+    pub error_popup_title: String,   // Title of the error popup
+    pub error_popup_message: String, // Error message to display
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -60,6 +73,7 @@ pub enum TemplatePopupSelection {
 pub enum SettingsFocus {
     Author,
     Theme,
+    Git,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -74,6 +88,11 @@ pub enum ThemeFocus {
     Accent2,
     Accent3,
     Title,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum GitFocus {
+    PullRebase,
 }
 
 impl Default for AppState {
@@ -100,6 +119,7 @@ impl Default for AppState {
             settings_focus: SettingsFocus::Author,
             settings_author_focus: AuthorFocus::Name,
             settings_theme_focus: ThemeFocus::Accent,
+            settings_git_focus: GitFocus::PullRebase,
             user_name_input: TextArea::new(vec![String::new()]),
             user_email_input: TextArea::new(vec![String::new()]),
             current_theme_accent: AccentColor::Blue,
@@ -108,10 +128,22 @@ impl Default for AppState {
             current_theme_title: TitleColor::Overlay0,
             settings_status_message: None,
 
+            // Git configuration
+            pull_rebase: true, // Default to rebase
+
             save_changes_git_status: Vec::new(),
             save_changes_git_status_loaded: false,
             status_git_status: Vec::new(),
             status_git_status_loaded: false,
+
+            // Update tab state
+            update_remote_status: None,
+            update_recent_operations: Vec::new(),
+
+            // Error popup state
+            show_error_popup: false,
+            error_popup_title: String::new(),
+            error_popup_message: String::new(),
         };
         state.check_git_status();
         state.load_settings();
@@ -162,6 +194,11 @@ impl AppState {
         if let Ok(Some(title)) = crate::config::get_theme_title_color() {
             self.current_theme_title = title;
         }
+
+        // Load git configuration
+        if let Ok(Some(pull_rebase)) = crate::config::get_pull_rebase() {
+            self.pull_rebase = pull_rebase;
+        }
     }
 
     /// Save current settings to git config
@@ -198,6 +235,11 @@ impl AppState {
         }
         if let Err(e) = crate::config::set_theme_title_color(self.current_theme_title) {
             return Err(format!("Failed to save theme title color: {}", e));
+        }
+
+        // Save git configuration
+        if let Err(e) = crate::config::set_pull_rebase(self.pull_rebase) {
+            return Err(format!("Failed to save pull rebase setting: {}", e));
         }
 
         Ok(())
@@ -306,5 +348,130 @@ impl AppState {
     /// Mark git status as needing refresh (called when leaving files tab)
     pub fn invalidate_status_git_status(&mut self) {
         self.status_git_status_loaded = false;
+    }
+
+    /// Refresh remote status for update tab
+    pub fn refresh_update_remote_status(&mut self) {
+        match crate::git::refresh_remote_status() {
+            Ok((remote_status, sync_operation)) => {
+                self.update_remote_status = Some(remote_status);
+                self.add_sync_operation(sync_operation);
+            }
+            Err(e) => {
+                // Show user-friendly error popup
+                self.show_error(
+                    "Refresh Failed",
+                    &format!("Failed to refresh repository status:\n\n{}", e),
+                );
+
+                // Also add to sync operations log for debugging
+                let error_operation = crate::git::SyncOperation {
+                    operation_type: crate::git::SyncOperationType::Refresh,
+                    status: crate::git::OperationStatus::Error,
+                    message: format!("Failed to refresh: {}", e),
+                    timestamp: std::time::SystemTime::now(),
+                };
+                self.add_sync_operation(error_operation);
+            }
+        }
+    }
+
+    /// Perform pull operation
+    pub fn perform_pull(&mut self) {
+        match crate::git::pull_origin(self.pull_rebase) {
+            Ok(sync_operation) => {
+                self.add_sync_operation(sync_operation);
+                // Refresh remote status after pull
+                if let Ok(remote_status) = crate::git::get_remote_status() {
+                    self.update_remote_status = Some(remote_status);
+                }
+            }
+            Err(e) => {
+                // Show user-friendly error popup
+                self.show_error(
+                    "Pull Failed",
+                    &format!("Failed to pull changes from remote:\n\n{}", e),
+                );
+
+                // Also add to sync operations log for debugging
+                let error_operation = crate::git::SyncOperation {
+                    operation_type: crate::git::SyncOperationType::Pull,
+                    status: crate::git::OperationStatus::Error,
+                    message: format!("Pull failed: {}", e),
+                    timestamp: std::time::SystemTime::now(),
+                };
+                self.add_sync_operation(error_operation);
+            }
+        }
+    }
+
+    /// Perform push operation
+    pub fn perform_push(&mut self) {
+        match crate::git::push_origin() {
+            Ok(sync_operation) => {
+                self.add_sync_operation(sync_operation);
+                // Refresh remote status after push
+                if let Ok(remote_status) = crate::git::get_remote_status() {
+                    self.update_remote_status = Some(remote_status);
+                }
+            }
+            Err(e) => {
+                // Show user-friendly error popup
+                self.show_error(
+                    "Push Failed",
+                    &format!("Failed to push changes to remote:\n\n{}", e),
+                );
+
+                // Also add to sync operations log for debugging
+                let error_operation = crate::git::SyncOperation {
+                    operation_type: crate::git::SyncOperationType::Push,
+                    status: crate::git::OperationStatus::Error,
+                    message: format!("Push failed: {}", e),
+                    timestamp: std::time::SystemTime::now(),
+                };
+                self.add_sync_operation(error_operation);
+            }
+        }
+    }
+
+    /// Add a sync operation to the recent operations list
+    fn add_sync_operation(&mut self, operation: crate::git::SyncOperation) {
+        self.update_recent_operations.insert(0, operation);
+        // Keep only the last 10 operations
+        if self.update_recent_operations.len() > 10 {
+            self.update_recent_operations.truncate(10);
+        }
+    }
+
+    /// Load initial remote status for update tab
+    pub fn load_update_remote_status(&mut self) {
+        if self.update_remote_status.is_none() {
+            if let Ok(remote_status) = crate::git::get_remote_status() {
+                self.update_remote_status = Some(remote_status);
+            }
+        }
+    }
+
+    /// Load/refresh update tab data when tab becomes active
+    /// This ensures timestamps are current and remote status is loaded
+    pub fn load_update_tab(&mut self) {
+        // Load remote status if not already loaded
+        self.load_update_remote_status();
+        // Note: Timestamps are refreshed automatically when rendering since they're calculated
+        // relative to the current time each time the UI is drawn
+    }
+
+    /// Show an error popup with title and message
+    pub fn show_error(&mut self, title: &str, message: &str) {
+        self.show_error_popup = true;
+        self.error_popup_title = title.to_string();
+        self.error_popup_message = message.to_string();
+    }
+
+    /// Hide the error popup
+    pub fn hide_error(&mut self) {
+        self.show_error_popup = false;
+        self.error_popup_title.clear();
+        self.error_popup_message.clear();
     }
 }
