@@ -15,6 +15,15 @@ struct CommitInfo {
     message: String,
     author: String,
     timestamp: i64,
+    oid: String, // Add commit OID for branch matching
+}
+
+// Helper struct for branch information
+#[derive(Debug, Clone)]
+struct BranchInfo {
+    name: String,
+    commit_oid: String,
+    is_remote: bool,
 }
 
 // Helper function to get recent commits from repository
@@ -44,6 +53,7 @@ fn get_recent_commits(repo_root: &std::path::Path, limit: usize) -> Vec<CommitIn
                                                     message: message_str,
                                                     author: author_str,
                                                     timestamp: time.seconds,
+                                                    oid: oid.to_string(),
                                                 });
                                             }
                                         }
@@ -89,6 +99,48 @@ fn format_relative_time(timestamp: i64) -> String {
             "unknown date".to_string()
         }
     }
+}
+
+// Helper function to get branch information
+fn get_branch_info(repo_root: &std::path::Path) -> Vec<BranchInfo> {
+    let mut branches = Vec::new();
+
+    if let Ok(repo) = gix::open(repo_root) {
+        if let Ok(refs) = repo.references() {
+            if let Ok(all_refs) = refs.all() {
+                for reference in all_refs.filter_map(Result::ok) {
+                    let name = reference.name().as_bstr();
+
+                    // Handle local branches (refs/heads/)
+                    if name.starts_with(b"refs/heads/") {
+                        if let Some(branch_name) = name.strip_prefix(b"refs/heads/") {
+                            if let Some(target) = reference.target().try_id() {
+                                branches.push(BranchInfo {
+                                    name: String::from_utf8_lossy(branch_name).to_string(),
+                                    commit_oid: target.to_string(),
+                                    is_remote: false,
+                                });
+                            }
+                        }
+                    }
+                    // Handle remote branches (refs/remotes/)
+                    else if name.starts_with(b"refs/remotes/") {
+                        if let Some(branch_name) = name.strip_prefix(b"refs/remotes/") {
+                            if let Some(target) = reference.target().try_id() {
+                                branches.push(BranchInfo {
+                                    name: String::from_utf8_lossy(branch_name).to_string(),
+                                    commit_oid: target.to_string(),
+                                    is_remote: true,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    branches
 }
 
 pub fn render_overview_tab(f: &mut Frame, area: Rect, state: &AppState) {
@@ -137,7 +189,6 @@ pub fn render_overview_tab(f: &mut Frame, area: Rect, state: &AppState) {
 
     if show_stats || show_calendar || show_sparkline {
         constraints.push(Constraint::Length(LABEL_HEIGHT));
-        constraints.push(Constraint::Min(0)); // filler
     }
 
     // If we can't show anything meaningful, just show a message
@@ -257,11 +308,12 @@ pub fn render_overview_tab(f: &mut Frame, area: Rect, state: &AppState) {
     // Stats row (always shown if we have minimum height)
     if show_stats {
         // Split the stats area into two parts: stats line and commit history
+        // Give more space to commit history to show all 7 commits properly
         let stats_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(3), // Stats line (with borders)
-                Constraint::Min(0),    // Commit history (remaining space)
+                Constraint::Min(10),   // Commit history (increased minimum space)
             ])
             .split(overview_chunks[chunk_idx]);
 
@@ -310,18 +362,20 @@ pub fn render_overview_tab(f: &mut Frame, area: Rect, state: &AppState) {
             );
         f.render_widget(stats_paragraph, stats_chunks[0]);
 
-        // Get real commit history data
-        let recent_commits = if state.git_enabled {
+        // Get real commit history data with branch information
+        let (recent_commits, branches) = if state.git_enabled {
             if let Some(repo_root) = &state.repo_root {
-                get_recent_commits(repo_root, 5)
+                let commits = get_recent_commits(repo_root, 7); // Increased from 5 to 7
+                let branches = get_branch_info(repo_root);
+                (commits, branches)
             } else {
-                Vec::new()
+                (Vec::new(), Vec::new())
             }
         } else {
-            Vec::new()
+            (Vec::new(), Vec::new())
         };
 
-        // Build commit history with colored spans
+        // Build commit history with colored spans and branch information
         let mut commit_lines = Vec::new();
 
         if recent_commits.is_empty() {
@@ -333,15 +387,65 @@ pub fn render_overview_tab(f: &mut Frame, area: Rect, state: &AppState) {
             for commit in &recent_commits {
                 let relative_time = format_relative_time(commit.timestamp);
 
-                let line = Line::from(vec![
-                    Span::raw("• "),
-                    Span::styled(&commit.message, theme.commit_message_style()),
+                // Find branches that point to this commit
+                let mut commit_branches = Vec::new();
+                for branch in &branches {
+                    if branch.commit_oid == commit.oid {
+                        if branch.is_remote {
+                            commit_branches.push(branch.name.clone());
+                        } else {
+                            commit_branches.push(branch.name.clone());
+                        }
+                    }
+                }
+
+                // Limit to most important branches to avoid clutter
+                commit_branches.sort();
+                if commit_branches.len() > 3 {
+                    commit_branches.truncate(2);
+                    commit_branches.push("...".to_string());
+                }
+
+                let mut line_spans = vec![Span::raw("• ")];
+
+                // Add branch information at the beginning if available
+                if !commit_branches.is_empty() {
+                    // Determine the primary style for parentheses based on the first branch
+                    let primary_style = if commit_branches[0] == "..." {
+                        theme.muted_text_style()
+                    } else if commit_branches[0].starts_with("origin/") {
+                        theme.accent3_style()
+                    } else {
+                        theme.accent_style()
+                    };
+
+                    line_spans.push(Span::styled("(", primary_style));
+                    for (i, branch) in commit_branches.iter().enumerate() {
+                        if i > 0 {
+                            line_spans.push(Span::styled(", ", theme.secondary_text_style()));
+                        }
+                        if branch == "..." {
+                            line_spans.push(Span::styled(branch.clone(), theme.muted_text_style()));
+                        } else if branch.starts_with("origin/") {
+                            line_spans.push(Span::styled(branch.clone(), theme.accent3_style()));
+                        } else {
+                            line_spans.push(Span::styled(branch.clone(), theme.accent_style()));
+                        }
+                    }
+                    line_spans.push(Span::styled(") ", primary_style));
+                }
+
+                line_spans.push(Span::styled(&commit.message, theme.commit_message_style()));
+
+                line_spans.extend(vec![
                     Span::styled(" - ", theme.secondary_text_style()),
                     Span::styled(&commit.author, theme.author_style()),
                     Span::styled(" (", theme.secondary_text_style()),
                     Span::styled(relative_time, theme.timestamp_style()),
                     Span::styled(")", theme.secondary_text_style()),
                 ]);
+
+                let line = Line::from(line_spans);
                 commit_lines.push(line);
             }
         }
@@ -419,37 +523,37 @@ pub fn render_overview_tab(f: &mut Frame, area: Rect, state: &AppState) {
 fn calculate_responsive_heights(area: Rect) -> (u16, u16, u16) {
     let total_height = area.height;
 
-    // Base heights
-    let base_stats_height = 10;
-    let base_calendar_height = 8; // Increased minimum for proper calendar display
-    let base_sparkline_height = 6;
+    // Base heights - reduced to make calendar more likely to appear
+    let base_stats_height = 12; // Reduced from 15 to make room for calendar
+    let base_calendar_height = 6; // Reduced minimum for calendar display
+    let base_sparkline_height = 4; // Reduced minimum
 
     if total_height <= 25 {
-        // Very small screens: use minimum heights
+        // Small screens: use minimum heights but prioritize commits
         (
             base_stats_height,
             base_calendar_height,
             base_sparkline_height,
         )
-    } else if total_height <= 40 {
-        // Small screens: slight increase
+    } else if total_height <= 35 {
+        // Medium screens: give more space to stats/commits
         (
-            base_stats_height,
+            base_stats_height + 3,
             base_calendar_height + 2,
             base_sparkline_height + 1,
         )
-    } else if total_height <= 60 {
-        // Medium screens: moderate increase - more calendar space
+    } else if total_height <= 50 {
+        // Large screens: significantly more space for commits
         (
-            base_stats_height + 2,
-            base_calendar_height + 8,
+            base_stats_height + 6,
+            base_calendar_height + 6,
             base_sparkline_height + 2,
         )
     } else {
-        // Large screens: significant increase - much more calendar space
+        // Very large screens: maximize commit visibility
         (
-            base_stats_height + 4,
-            base_calendar_height + 16,
+            base_stats_height + 10,
+            base_calendar_height + 12,
             base_sparkline_height + 4,
         )
     }

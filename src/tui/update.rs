@@ -251,13 +251,19 @@ fn render_remote_status(f: &mut Frame, area: Rect, state: &AppState, theme: &The
     let url_text = format!("({})", remote_status.url);
     let ahead_behind_text = if remote_status.ahead > 0 && remote_status.behind > 0 {
         format!(
-            "{} ahead, {} behind",
+            "{} local changes not uploaded to remote, {} new changes to download from remote",
             remote_status.ahead, remote_status.behind
         )
     } else if remote_status.ahead > 0 {
-        format!("{} ahead", remote_status.ahead)
+        format!(
+            "{} local changes not uploaded to remote",
+            remote_status.ahead
+        )
     } else if remote_status.behind > 0 {
-        format!("{} behind", remote_status.behind)
+        format!(
+            "{} new changes to download from remote",
+            remote_status.behind
+        )
     } else {
         "Up to date".to_string()
     };
@@ -349,9 +355,12 @@ fn render_download_section(f: &mut Frame, area: Rect, state: &AppState, theme: &
     };
 
     let available_text = if remote_status.behind > 0 {
-        format!("{} new changes", remote_status.behind)
+        format!(
+            "{} new changes to download from remote",
+            remote_status.behind
+        )
     } else {
-        "No new changes".to_string()
+        "No new changes to download from remote".to_string()
     };
 
     let pull_mode = if state.pull_rebase { "rebase" } else { "merge" };
@@ -366,7 +375,7 @@ fn render_download_section(f: &mut Frame, area: Rect, state: &AppState, theme: &
         Line::from(""),
         if remote_status.behind > 0 {
             Line::from(vec![
-                Span::styled("Available: ", theme.accent2_style()),
+                Span::styled("Status: ", theme.accent2_style()),
                 Span::styled(&available_text, theme.info_style()),
             ])
         } else {
@@ -443,9 +452,9 @@ fn render_upload_section(f: &mut Frame, area: Rect, state: &AppState, theme: &Th
     };
 
     let ready_text = if remote_status.ahead > 0 {
-        format!("{} local changes", remote_status.ahead)
+        format!("{} local changes to upload to remote", remote_status.ahead)
     } else {
-        "Nothing to upload".to_string()
+        "No local changes to upload to remote".to_string()
     };
 
     let upload_text = vec![
@@ -456,7 +465,7 @@ fn render_upload_section(f: &mut Frame, area: Rect, state: &AppState, theme: &Th
         Line::from(""),
         if remote_status.ahead > 0 {
             Line::from(vec![
-                Span::styled("Ready: ", theme.accent2_style()),
+                Span::styled("Status: ", theme.accent2_style()),
                 Span::styled(&ready_text, theme.info_style()),
             ])
         } else {
