@@ -577,10 +577,10 @@ impl AppState {
 
                     if is_currently_staged {
                         // Unstage the file
-                        let _ = unstage_file(file_path);
+                        let _ = unstage_file(&file_path.to_string_lossy());
                     } else {
                         // Stage the file
-                        let _ = stage_file(file_path);
+                        let _ = stage_file(&file_path.to_string_lossy());
                     }
 
                     // Refresh git status cache after staging/unstaging

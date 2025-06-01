@@ -1,12 +1,23 @@
 [package]
 name = "gitix"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
+
+[[bin]]
+name = "gitix"
+path = "src/main.rs"
+
+[[bin]]
+name = "test_gix_api"
+path = "test_gix_api.rs"
 
 [dependencies]
-ratatui = { version = "0.29", features = ["widget-calendar"] }
-crossterm = "0.29"
-gix = { version = "0.72", features = ["index", "worktree-mutation", "status"] }
+ratatui = { version = "0.29.0", features = ["widget-calendar"] }
+crossterm = "0.28.1"
+gix = { version = "0.72", features = ["status", "index"] }
+git2 = { version = "0.20", default-features = false, features = [
+  "vendored-openssl",
+] }
 chrono = "0.4"
 time = "0.3"
 gix-status = "0.19"

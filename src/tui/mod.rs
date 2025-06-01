@@ -140,7 +140,7 @@ pub fn start_tui(state: &mut AppState) {
                 // Status bar with key hints (crust background per guidelines)
                 let hints = match active_tab {
                     1 => "[Tab] Next Tab  [Shift+Tab] Previous Tab  [↑↓] Navigate  [Enter] Open  [q] Quit",
-                    2 if state.git_enabled => "[Tab] Next Tab  [Shift+Tab] Previous Tab  [↑↓] Navigate Files  [q] Quit",
+                    2 if state.git_enabled => "[Tab] Next Tab  [Shift+Tab] Previous Tab  [↑↓] Navigate  [q] Quit  (Read Only - Use 'Save Changes' tab to stage/commit)",
                     3 if state.git_enabled && state.show_commit_help => "[Enter] OK  [Esc] Close Help",
                     3 if state.git_enabled && state.show_template_popup => "[←→] Navigate  [Enter] Apply  [Esc] Cancel",
                     3 if state.git_enabled => "[Tab] Next Tab  [↑↓] Navigate  [Space] Stage/Unstage  [Enter] Commit  [Shift+?] Help  [Shift+T] Template  [q] Quit",
