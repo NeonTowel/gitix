@@ -144,6 +144,7 @@ pub fn start_tui(state: &mut AppState) {
                     3 if state.git_enabled && state.show_commit_help => "[Enter] OK  [Esc] Close Help",
                     3 if state.git_enabled && state.show_template_popup => "[←→] Navigate  [Enter] Apply  [Esc] Cancel",
                     3 if state.git_enabled => "[Tab] Next Tab  [↑↓] Navigate  [Space] Stage/Unstage  [Enter] Commit  [Shift+?] Help  [Shift+T] Template  [q] Quit",
+                    4 if state.git_enabled => "[Tab] Next Tab  [Shift+Tab] Previous Tab  [Shift+R] Refresh  [P] Pull  [U] Push  [q] Quit",
                     _ => "[Tab] Next Tab  [Shift+Tab] Previous Tab  [q] Quit",
                 };
                 let hint_paragraph = Paragraph::new(hints)
@@ -353,6 +354,23 @@ pub fn start_tui(state: &mut AppState) {
                         (KeyCode::Char('T'), KeyModifiers::SHIFT) if active_tab == 3 && !state.show_commit_help && !state.show_template_popup => {
                             // Save changes tab: show template popup
                             state.toggle_template_popup();
+                        }
+                        // Update tab key bindings
+                        (KeyCode::Char('R'), KeyModifiers::SHIFT) if active_tab == 4 && state.git_enabled => {
+                            // Update tab: refresh remote and local status
+                            // TODO: Implement actual refresh functionality
+                            // This would fetch from remote and update local commit count
+                            println!("Refreshing repository status...");
+                        }
+                        (KeyCode::Char('p') | KeyCode::Char('P'), _) if active_tab == 4 && state.git_enabled => {
+                            // Update tab: pull changes from remote
+                            // TODO: Implement actual pull functionality
+                            println!("Pulling changes from remote...");
+                        }
+                        (KeyCode::Char('u') | KeyCode::Char('U'), _) if active_tab == 4 && state.git_enabled => {
+                            // Update tab: push changes to remote
+                            // TODO: Implement actual push functionality
+                            println!("Pushing changes to remote...");
                         }
                         // Handle commit message input when focused on commit message and no popups are shown
                         _ if active_tab == 3
