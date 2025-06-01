@@ -467,9 +467,11 @@ pub fn unstage_file(file_path: &str) -> Result<(), GitError> {
     let mut file_status = None;
 
     for entry in statuses.iter() {
-        if entry.path() == Some(file_path) {
-            file_status = Some(entry.status());
-            break;
+        if let Some(entry_path) = entry.path() {
+            if entry_path == file_path {
+                file_status = Some(entry.status());
+                break;
+            }
         }
     }
 
@@ -487,19 +489,57 @@ pub fn unstage_file(file_path: &str) -> Result<(), GitError> {
         // Safe to remove from index - this won't cause data loss
         index.remove_path(Path::new(file_path))?;
     } else if status.is_index_modified() || status.is_index_deleted() {
-        // File exists in HEAD but is modified/deleted in index
-        // We need to reset the index entry to match HEAD
+        // For modified or deleted files, we need to restore them to their HEAD state
+        // This is equivalent to "git reset HEAD <file>"
         match repo.head() {
             Ok(head) => {
-                let head_commit = head.peel_to_commit()?;
-                let head_tree = head_commit.tree()?;
+                match head.peel_to_commit() {
+                    Ok(head_commit) => {
+                        match head_commit.tree() {
+                            Ok(head_tree) => {
+                                // Try to find the file in the HEAD tree
+                                match head_tree.get_path(Path::new(file_path)) {
+                                    Ok(tree_entry) => {
+                                        // Remove the current index entry first
+                                        let _ = index.remove_path(Path::new(file_path));
 
-                // Reset this specific file to HEAD state
-                repo.reset_default(Some(head_tree.as_object()), [file_path].iter())?;
+                                        // Create an index entry from the HEAD tree entry
+                                        let mut index_entry = git2::IndexEntry {
+                                            ctime: git2::IndexTime::new(0, 0),
+                                            mtime: git2::IndexTime::new(0, 0),
+                                            dev: 0,
+                                            ino: 0,
+                                            mode: tree_entry.filemode() as u32,
+                                            uid: 0,
+                                            gid: 0,
+                                            file_size: 0,
+                                            id: tree_entry.id(),
+                                            flags: 0,
+                                            flags_extended: 0,
+                                            path: file_path.as_bytes().to_vec(),
+                                        };
+
+                                        // Add the entry back to the index
+                                        index.add(&index_entry)?;
+                                    }
+                                    Err(_) => {
+                                        // File doesn't exist in HEAD, so removing it is correct
+                                        index.remove_path(Path::new(file_path))?;
+                                    }
+                                }
+                            }
+                            Err(_) => {
+                                index.remove_path(Path::new(file_path))?;
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        index.remove_path(Path::new(file_path))?;
+                    }
+                }
             }
             Err(_) => {
                 // No HEAD commit (initial repository)
-                // In this case, all files are "new", so safe to remove
                 index.remove_path(Path::new(file_path))?;
             }
         }

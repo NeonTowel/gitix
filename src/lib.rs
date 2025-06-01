@@ -1,5 +1,6 @@
 #![allow(warnings)]
 pub mod app;
+pub mod config;
 pub mod files;
 pub mod git;
 pub mod tui;

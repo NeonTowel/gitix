@@ -67,6 +67,14 @@ pub fn start_tui(state: &mut AppState) {
             .draw(|f| {
                 let size = f.size();
                 
+                // Create theme with current settings for live preview
+                let theme = Theme::with_accents_and_title(
+                    state.current_theme_accent,
+                    state.current_theme_accent2,
+                    state.current_theme_accent3,
+                    state.current_theme_title,
+                );
+                
                 // Set main background
                 f.render_widget(
                     Block::default().style(theme.main_background_style()),
@@ -306,9 +314,12 @@ pub fn start_tui(state: &mut AppState) {
                             }
                         }
                         (KeyCode::Char(' '), _) if active_tab == 3 => {
-                            // Save changes tab: toggle file staging - only if no popups are shown
+                            // Save changes tab: toggle file staging - only if no popups are shown and focus is on file list
                             if !state.show_commit_help && !state.show_template_popup && state.save_changes_focus == SaveChangesFocus::FileList {
                                 state.toggle_file_staging();
+                            } else if !state.show_commit_help && !state.show_template_popup && state.save_changes_focus == SaveChangesFocus::CommitMessage {
+                                // When focus is on commit message, pass space key to the TextArea input handler
+                                state.commit_message.input(Event::Key(key_event));
                             }
                         }
                         (KeyCode::Enter, _) if active_tab == 3 && state.show_commit_help => {
@@ -381,6 +392,148 @@ pub fn start_tui(state: &mut AppState) {
                             // Use TextArea's built-in input handling for full text editing support
                             state.commit_message.input(Event::Key(key_event));
                         }
+                        // Settings tab key bindings (tab 5)
+                        (KeyCode::Tab, KeyModifiers::NONE) => {
+                            let mut next_tab = (active_tab + 1) % tab_count;
+                            while !state.git_enabled && next_tab > 1 {
+                                next_tab = (next_tab + 1) % tab_count;
+                            }
+                            // Invalidate save changes git status cache when leaving save changes tab
+                            if active_tab == 3 && next_tab != 3 {
+                                state.invalidate_save_changes_git_status();
+                            }
+                            // Invalidate status git status cache when leaving status tab
+                            if active_tab == 2 && next_tab != 2 {
+                                state.invalidate_status_git_status();
+                            }
+                            active_tab = next_tab;
+                        }
+                        (KeyCode::BackTab, _) | (KeyCode::Tab, KeyModifiers::SHIFT) => {
+                            let mut prev_tab = (active_tab + tab_count - 1) % tab_count;
+                            while !state.git_enabled && prev_tab > 1 {
+                                prev_tab = (prev_tab + tab_count - 1) % tab_count;
+                            }
+                            // Invalidate save changes git status cache when leaving save changes tab
+                            if active_tab == 3 && prev_tab != 3 {
+                                state.invalidate_save_changes_git_status();
+                            }
+                            // Invalidate status git status cache when leaving status tab
+                            if active_tab == 2 && prev_tab != 2 {
+                                state.invalidate_status_git_status();
+                            }
+                            active_tab = prev_tab;
+                        }
+                        (KeyCode::Left, KeyModifiers::CONTROL) if active_tab == 5 && state.git_enabled => {
+                            // Settings tab: switch to Author panel
+                            state.settings_focus = crate::app::SettingsFocus::Author;
+                        }
+                        (KeyCode::Right, KeyModifiers::CONTROL) if active_tab == 5 && state.git_enabled => {
+                            // Settings tab: switch to Theme panel
+                            state.settings_focus = crate::app::SettingsFocus::Theme;
+                        }
+                        (KeyCode::Left, _) if active_tab == 5 && state.git_enabled => {
+                            // Settings tab: cycle theme colors backward (only works in Theme panel)
+                            if state.settings_focus == crate::app::SettingsFocus::Theme {
+                                use crate::app::ThemeFocus;
+                                match state.settings_theme_focus {
+                                    ThemeFocus::Accent => {
+                                        state.current_theme_accent = cycle_accent_color_backward(state.current_theme_accent);
+                                    }
+                                    ThemeFocus::Accent2 => {
+                                        state.current_theme_accent2 = cycle_accent_color_backward(state.current_theme_accent2);
+                                    }
+                                    ThemeFocus::Accent3 => {
+                                        state.current_theme_accent3 = cycle_accent_color_backward(state.current_theme_accent3);
+                                    }
+                                    ThemeFocus::Title => {
+                                        state.current_theme_title = cycle_title_color_backward(state.current_theme_title);
+                                    }
+                                }
+                            }
+                        }
+                        (KeyCode::Right, _) if active_tab == 5 && state.git_enabled => {
+                            // Settings tab: cycle theme colors forward (only works in Theme panel)
+                            if state.settings_focus == crate::app::SettingsFocus::Theme {
+                                use crate::app::ThemeFocus;
+                                match state.settings_theme_focus {
+                                    ThemeFocus::Accent => {
+                                        state.current_theme_accent = cycle_accent_color_forward(state.current_theme_accent);
+                                    }
+                                    ThemeFocus::Accent2 => {
+                                        state.current_theme_accent2 = cycle_accent_color_forward(state.current_theme_accent2);
+                                    }
+                                    ThemeFocus::Accent3 => {
+                                        state.current_theme_accent3 = cycle_accent_color_forward(state.current_theme_accent3);
+                                    }
+                                    ThemeFocus::Title => {
+                                        state.current_theme_title = cycle_title_color_forward(state.current_theme_title);
+                                    }
+                                }
+                            }
+                        }
+                        (KeyCode::Up, _) if active_tab == 5 && state.git_enabled => {
+                            match state.settings_focus {
+                                crate::app::SettingsFocus::Author => {
+                                    state.settings_author_focus = crate::app::AuthorFocus::Name;
+                                }
+                                crate::app::SettingsFocus::Theme => {
+                                    use crate::app::ThemeFocus;
+                                    state.settings_theme_focus = match state.settings_theme_focus {
+                                        ThemeFocus::Accent2 => ThemeFocus::Accent,
+                                        ThemeFocus::Accent3 => ThemeFocus::Accent2,
+                                        ThemeFocus::Title => ThemeFocus::Accent3,
+                                        ThemeFocus::Accent => ThemeFocus::Title,
+                                    };
+                                }
+                            }
+                        }
+                        (KeyCode::Down, _) if active_tab == 5 && state.git_enabled => {
+                            match state.settings_focus {
+                                crate::app::SettingsFocus::Author => {
+                                    state.settings_author_focus = crate::app::AuthorFocus::Email;
+                                }
+                                crate::app::SettingsFocus::Theme => {
+                                    use crate::app::ThemeFocus;
+                                    state.settings_theme_focus = match state.settings_theme_focus {
+                                        ThemeFocus::Accent => ThemeFocus::Accent2,
+                                        ThemeFocus::Accent2 => ThemeFocus::Accent3,
+                                        ThemeFocus::Accent3 => ThemeFocus::Title,
+                                        ThemeFocus::Title => ThemeFocus::Accent,
+                                    };
+                                }
+                            }
+                        }
+                        (KeyCode::Char('s'), KeyModifiers::CONTROL) if active_tab == 5 && state.git_enabled => {
+                            // Save settings
+                            match state.save_settings() {
+                                Ok(()) => {
+                                    state.settings_status_message = Some("✓ Settings saved successfully".to_string());
+                                }
+                                Err(e) => {
+                                    state.settings_status_message = Some(format!("✗ Failed to save: {}", e));
+                                }
+                            }
+                        }
+                        // Handle author input when in settings tab and author panel
+                        _ if active_tab == 5
+                            && state.git_enabled
+                            && state.settings_focus == crate::app::SettingsFocus::Author =>
+                        {
+                            match state.settings_author_focus {
+                                crate::app::AuthorFocus::Name => {
+                                    state.user_name_input.input(Event::Key(key_event));
+                                    if state.settings_status_message.is_some() {
+                                        state.settings_status_message = None;
+                                    }
+                                }
+                                crate::app::AuthorFocus::Email => {
+                                    state.user_email_input.input(Event::Key(key_event));
+                                    if state.settings_status_message.is_some() {
+                                        state.settings_status_message = None;
+                                    }
+                                }
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -418,4 +571,84 @@ fn centered_rect(percent_x: u16, height: u16, r: ratatui::layout::Rect) -> ratat
         )
         .split(popup_layout[1]);
     horizontal[1]
+}
+
+// Helper functions for cycling theme colors
+fn cycle_accent_color_forward(current: crate::tui::theme::AccentColor) -> crate::tui::theme::AccentColor {
+    use crate::tui::theme::AccentColor;
+    match current {
+        AccentColor::Rosewater => AccentColor::Flamingo,
+        AccentColor::Flamingo => AccentColor::Pink,
+        AccentColor::Pink => AccentColor::Mauve,
+        AccentColor::Mauve => AccentColor::Red,
+        AccentColor::Red => AccentColor::Maroon,
+        AccentColor::Maroon => AccentColor::Peach,
+        AccentColor::Peach => AccentColor::Yellow,
+        AccentColor::Yellow => AccentColor::Green,
+        AccentColor::Green => AccentColor::Teal,
+        AccentColor::Teal => AccentColor::Sky,
+        AccentColor::Sky => AccentColor::Sapphire,
+        AccentColor::Sapphire => AccentColor::Blue,
+        AccentColor::Blue => AccentColor::Lavender,
+        AccentColor::Lavender => AccentColor::Rosewater,
+    }
+}
+
+fn cycle_accent_color_backward(current: crate::tui::theme::AccentColor) -> crate::tui::theme::AccentColor {
+    use crate::tui::theme::AccentColor;
+    match current {
+        AccentColor::Rosewater => AccentColor::Lavender,
+        AccentColor::Flamingo => AccentColor::Rosewater,
+        AccentColor::Pink => AccentColor::Flamingo,
+        AccentColor::Mauve => AccentColor::Pink,
+        AccentColor::Red => AccentColor::Mauve,
+        AccentColor::Maroon => AccentColor::Red,
+        AccentColor::Peach => AccentColor::Maroon,
+        AccentColor::Yellow => AccentColor::Peach,
+        AccentColor::Green => AccentColor::Yellow,
+        AccentColor::Teal => AccentColor::Green,
+        AccentColor::Sky => AccentColor::Teal,
+        AccentColor::Sapphire => AccentColor::Sky,
+        AccentColor::Blue => AccentColor::Sapphire,
+        AccentColor::Lavender => AccentColor::Blue,
+    }
+}
+
+fn cycle_title_color_forward(current: crate::tui::theme::TitleColor) -> crate::tui::theme::TitleColor {
+    use crate::tui::theme::{TitleColor, AccentColor};
+    match current {
+        TitleColor::Overlay0 => TitleColor::Overlay1,
+        TitleColor::Overlay1 => TitleColor::Overlay2,
+        TitleColor::Overlay2 => TitleColor::Text,
+        TitleColor::Text => TitleColor::Subtext0,
+        TitleColor::Subtext0 => TitleColor::Subtext1,
+        TitleColor::Subtext1 => TitleColor::Accent(AccentColor::Rosewater),
+        TitleColor::Accent(accent) => {
+            let next_accent = cycle_accent_color_forward(accent);
+            if next_accent == AccentColor::Rosewater {
+                TitleColor::Overlay0 // Wrap around to start
+            } else {
+                TitleColor::Accent(next_accent)
+            }
+        }
+    }
+}
+
+fn cycle_title_color_backward(current: crate::tui::theme::TitleColor) -> crate::tui::theme::TitleColor {
+    use crate::tui::theme::{TitleColor, AccentColor};
+    match current {
+        TitleColor::Overlay0 => TitleColor::Accent(AccentColor::Lavender),
+        TitleColor::Overlay1 => TitleColor::Overlay0,
+        TitleColor::Overlay2 => TitleColor::Overlay1,
+        TitleColor::Text => TitleColor::Overlay2,
+        TitleColor::Subtext0 => TitleColor::Text,
+        TitleColor::Subtext1 => TitleColor::Subtext0,
+        TitleColor::Accent(accent) => {
+            if accent == AccentColor::Rosewater {
+                TitleColor::Subtext1
+            } else {
+                TitleColor::Accent(cycle_accent_color_backward(accent))
+            }
+        }
+    }
 }

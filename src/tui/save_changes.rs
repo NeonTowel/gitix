@@ -575,15 +575,18 @@ impl AppState {
                     let file_path = &self.save_changes_git_status[selected_idx].path;
                     let is_currently_staged = self.save_changes_git_status[selected_idx].staged;
 
+                    // Convert path to string using display() for better path handling
+                    let path_str = file_path.display().to_string();
+
                     if is_currently_staged {
                         // Unstage the file
-                        if let Ok(()) = unstage_file(&file_path.to_string_lossy()) {
+                        if let Ok(()) = unstage_file(&path_str) {
                             // Update the staging status in-place to avoid reordering
                             self.save_changes_git_status[selected_idx].staged = false;
                         }
                     } else {
                         // Stage the file
-                        if let Ok(()) = stage_file(&file_path.to_string_lossy()) {
+                        if let Ok(()) = stage_file(&path_str) {
                             // Update the staging status in-place to avoid reordering
                             self.save_changes_git_status[selected_idx].staged = true;
                         }

@@ -1,15 +1,18 @@
+use crate::tui::theme::{AccentColor, TitleColor};
 use ratatui::widgets::ScrollbarState;
 use ratatui::widgets::TableState;
 use std::path::PathBuf;
 use tui_textarea::TextArea;
 
 pub struct AppState {
-    pub git_enabled: bool,              // Is this a git repo?
-    pub show_init_prompt: bool,         // Should we prompt to init?
-    pub repo_root: Option<PathBuf>,     // Path to repo root if found
-    pub root_dir: PathBuf,              // The directory jail root
-    pub current_dir: PathBuf,           // The directory currently being browsed
-    pub files_selected_row: usize,      // Selected row in files tab
+    pub git_enabled: bool,          // Is this a git repo?
+    pub show_init_prompt: bool,     // Should we prompt to init?
+    pub repo_root: Option<PathBuf>, // Path to repo root if found
+    pub root_dir: PathBuf,          // The directory jail root
+    pub current_dir: PathBuf,       // The directory currently being browsed
+    pub files_selected_row: usize,  // Selected row in files tab
+
+    // Table states for various tabs
     pub status_table_state: TableState, // Table state for status tab scrolling
 
     // Save changes tab state
@@ -22,6 +25,18 @@ pub struct AppState {
     pub help_popup_scrollbar_state: ScrollbarState, // Scrollbar state for help popup
     pub show_template_popup: bool,            // Whether to show template selection popup
     pub template_popup_selection: TemplatePopupSelection, // Which button is selected in template popup
+
+    // Settings tab state
+    pub settings_focus: SettingsFocus, // Which settings section has focus
+    pub settings_author_focus: AuthorFocus, // Which author field has focus
+    pub settings_theme_focus: ThemeFocus, // Which theme setting has focus
+    pub user_name_input: TextArea<'static>, // User name input field
+    pub user_email_input: TextArea<'static>, // User email input field
+    pub current_theme_accent: AccentColor, // Current primary accent color
+    pub current_theme_accent2: AccentColor, // Current secondary accent color
+    pub current_theme_accent3: AccentColor, // Current tertiary accent color
+    pub current_theme_title: TitleColor, // Current title color
+    pub settings_status_message: Option<String>, // Status message for settings operations
 
     // Git status caching for save changes tab
     pub save_changes_git_status: Vec<crate::git::GitFileStatus>, // Cached git status for save changes tab
@@ -44,6 +59,26 @@ pub enum TemplatePopupSelection {
     No,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum SettingsFocus {
+    Author,
+    Theme,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum AuthorFocus {
+    Name,
+    Email,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ThemeFocus {
+    Accent,
+    Accent2,
+    Accent3,
+    Title,
+}
+
 impl Default for AppState {
     fn default() -> Self {
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
@@ -64,12 +99,26 @@ impl Default for AppState {
             help_popup_scrollbar_state: ScrollbarState::default(),
             show_template_popup: false,
             template_popup_selection: TemplatePopupSelection::No,
+
+            // Settings state
+            settings_focus: SettingsFocus::Author,
+            settings_author_focus: AuthorFocus::Name,
+            settings_theme_focus: ThemeFocus::Accent,
+            user_name_input: TextArea::new(vec![String::new()]),
+            user_email_input: TextArea::new(vec![String::new()]),
+            current_theme_accent: AccentColor::Blue,
+            current_theme_accent2: AccentColor::Rosewater,
+            current_theme_accent3: AccentColor::Mauve,
+            current_theme_title: TitleColor::Overlay0,
+            settings_status_message: None,
+
             save_changes_git_status: Vec::new(),
             save_changes_git_status_loaded: false,
             status_git_status: Vec::new(),
             status_git_status_loaded: false,
         };
         state.check_git_status();
+        state.load_settings();
         state
     }
 }
@@ -88,6 +137,74 @@ impl AppState {
                 self.repo_root = None;
             }
         }
+    }
+
+    /// Load settings from git config
+    pub fn load_settings(&mut self) {
+        if !self.git_enabled {
+            return;
+        }
+
+        // Load user name and email
+        if let Ok(Some(name)) = crate::config::get_user_name() {
+            self.user_name_input = TextArea::new(vec![name]);
+        }
+        if let Ok(Some(email)) = crate::config::get_user_email() {
+            self.user_email_input = TextArea::new(vec![email]);
+        }
+
+        // Load theme settings
+        if let Ok(Some(accent)) = crate::config::get_theme_accent() {
+            self.current_theme_accent = accent;
+        }
+        if let Ok(Some(accent2)) = crate::config::get_theme_accent2() {
+            self.current_theme_accent2 = accent2;
+        }
+        if let Ok(Some(accent3)) = crate::config::get_theme_accent3() {
+            self.current_theme_accent3 = accent3;
+        }
+        if let Ok(Some(title)) = crate::config::get_theme_title_color() {
+            self.current_theme_title = title;
+        }
+    }
+
+    /// Save current settings to git config
+    pub fn save_settings(&mut self) -> Result<(), String> {
+        if !self.git_enabled {
+            return Err("Not in a git repository".to_string());
+        }
+
+        // Save user name and email
+        let name = self.user_name_input.lines()[0].clone();
+        let email = self.user_email_input.lines()[0].clone();
+
+        if !name.is_empty() {
+            if let Err(e) = crate::config::set_user_name(&name) {
+                return Err(format!("Failed to save user name: {}", e));
+            }
+        }
+
+        if !email.is_empty() {
+            if let Err(e) = crate::config::set_user_email(&email) {
+                return Err(format!("Failed to save user email: {}", e));
+            }
+        }
+
+        // Save theme settings
+        if let Err(e) = crate::config::set_theme_accent(self.current_theme_accent) {
+            return Err(format!("Failed to save theme accent: {}", e));
+        }
+        if let Err(e) = crate::config::set_theme_accent2(self.current_theme_accent2) {
+            return Err(format!("Failed to save theme accent2: {}", e));
+        }
+        if let Err(e) = crate::config::set_theme_accent3(self.current_theme_accent3) {
+            return Err(format!("Failed to save theme accent3: {}", e));
+        }
+        if let Err(e) = crate::config::set_theme_title_color(self.current_theme_title) {
+            return Err(format!("Failed to save theme title color: {}", e));
+        }
+
+        Ok(())
     }
 
     pub fn try_init_repo(&mut self) -> Result<(), gix::init::Error> {
@@ -194,37 +311,4 @@ impl AppState {
     pub fn invalidate_status_git_status(&mut self) {
         self.status_git_status_loaded = false;
     }
-}
-
-pub fn run() {
-    // Get the current directory
-    let cwd = std::env::current_dir().unwrap();
-
-    // Initialize app state
-    let mut state = AppState {
-        git_enabled: false,
-        show_init_prompt: false,
-        repo_root: None,
-        root_dir: cwd.clone(),
-        current_dir: cwd,
-        files_selected_row: 0,
-        status_table_state: TableState::default(),
-        save_changes_table_state: TableState::default(),
-        staged_files: Vec::new(),
-        commit_message: TextArea::new(vec![String::new()]),
-        save_changes_focus: SaveChangesFocus::CommitMessage,
-        show_commit_help: false,
-        help_popup_scroll: 0,
-        help_popup_scrollbar_state: ScrollbarState::default(),
-        show_template_popup: false,
-        template_popup_selection: TemplatePopupSelection::No,
-        save_changes_git_status: Vec::new(),
-        save_changes_git_status_loaded: false,
-        status_git_status: Vec::new(),
-        status_git_status_loaded: false,
-    };
-    state.check_git_status();
-
-    // Pass state to TUI
-    crate::tui::start_tui(&mut state);
 }
