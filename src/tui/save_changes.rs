@@ -7,7 +7,7 @@ use ratatui::widgets::{
     Block, Borders, Cell, Clear, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState,
     Table, Wrap,
 };
-use ratatui::{Frame, layout::Rect};
+use ratatui::{layout::Rect, Frame};
 use std::path::PathBuf;
 
 pub fn render_save_changes_tab(f: &mut Frame, area: Rect, state: &mut AppState) {
@@ -32,7 +32,7 @@ pub fn render_save_changes_tab(f: &mut Frame, area: Rect, state: &mut AppState) 
     // Split the area into commit message (top) and file list (bottom)
     // Use responsive layout that ensures status panel is always visible
     let min_status_height = 3; // Status panel minimum
-    let min_commit_input_height = 3; // Commit input minimum  
+    let min_commit_input_height = 3; // Commit input minimum
     let min_commit_area_height = min_status_height + min_commit_input_height; // Total minimum for commit area
     let min_file_list_height = 5; // Minimum for file list to be usable
 
@@ -577,14 +577,20 @@ impl AppState {
 
                     if is_currently_staged {
                         // Unstage the file
-                        let _ = unstage_file(&file_path.to_string_lossy());
+                        if let Ok(()) = unstage_file(&file_path.to_string_lossy()) {
+                            // Update the staging status in-place to avoid reordering
+                            self.save_changes_git_status[selected_idx].staged = false;
+                        }
                     } else {
                         // Stage the file
-                        let _ = stage_file(&file_path.to_string_lossy());
+                        if let Ok(()) = stage_file(&file_path.to_string_lossy()) {
+                            // Update the staging status in-place to avoid reordering
+                            self.save_changes_git_status[selected_idx].staged = true;
+                        }
                     }
 
-                    // Refresh git status cache after staging/unstaging
-                    self.refresh_save_changes_git_status();
+                    // No need to refresh git status cache - we updated it in-place
+                    // This preserves the file order and selection
                 }
             }
         }
@@ -613,10 +619,53 @@ impl AppState {
         // Clear commit message
         self.commit_message = tui_textarea::TextArea::new(vec![String::new()]);
 
-        // Refresh git status cache after commit
-        self.refresh_save_changes_git_status();
+        // Refresh git status cache after commit, preserving selection if possible
+        self.refresh_save_changes_git_status_preserve_selection();
 
         Ok(())
+    }
+
+    /// Refresh git status while trying to preserve the current selection
+    pub fn refresh_save_changes_git_status_preserve_selection(&mut self) {
+        // Remember the currently selected file path
+        let selected_file_path =
+            if let Some(selected_idx) = self.save_changes_table_state.selected() {
+                if selected_idx < self.save_changes_git_status.len() {
+                    Some(self.save_changes_git_status[selected_idx].path.clone())
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+        // Refresh the git status
+        self.refresh_save_changes_git_status();
+
+        // Try to restore selection to the same file
+        if let Some(target_path) = selected_file_path {
+            if let Some(new_idx) = self
+                .save_changes_git_status
+                .iter()
+                .position(|f| f.path == target_path)
+            {
+                self.save_changes_table_state.select(Some(new_idx));
+            } else {
+                // File no longer exists, select a reasonable fallback
+                if !self.save_changes_git_status.is_empty() {
+                    let fallback_idx =
+                        if let Some(old_idx) = self.save_changes_table_state.selected() {
+                            // Try to select the same index, or the last item if the list is shorter
+                            old_idx.min(self.save_changes_git_status.len() - 1)
+                        } else {
+                            0
+                        };
+                    self.save_changes_table_state.select(Some(fallback_idx));
+                } else {
+                    self.save_changes_table_state.select(None);
+                }
+            }
+        }
     }
 
     pub fn switch_save_changes_focus(&mut self) {
