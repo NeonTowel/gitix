@@ -56,7 +56,6 @@ pub fn render_status_tab(f: &mut Frame, area: Rect, state: &mut AppState) {
 
     // Create table headers
     let header = Row::new(vec![
-        Cell::from("Staged").style(theme.accent2_style()),
         Cell::from("File Path").style(theme.accent2_style()),
         Cell::from("Status").style(theme.accent2_style()),
         Cell::from("Size").style(theme.accent2_style()),
@@ -67,17 +66,6 @@ pub fn render_status_tab(f: &mut Frame, area: Rect, state: &mut AppState) {
         .status_git_status
         .iter()
         .map(|file| {
-            // Staging indicator
-            let staged_cell = if file.staged {
-                Cell::from("●").style(
-                    Style::default()
-                        .fg(Color::Green)
-                        .add_modifier(Modifier::BOLD),
-                )
-            } else {
-                Cell::from("○").style(Style::default().fg(Color::Gray))
-            };
-
             let path_cell = Cell::from(file.path.display().to_string()).style(theme.text_style());
 
             let status_cell = Cell::from(file.status.as_description()).style(
@@ -89,7 +77,7 @@ pub fn render_status_tab(f: &mut Frame, area: Rect, state: &mut AppState) {
             let size_cell =
                 Cell::from(format_file_size(file.file_size)).style(theme.secondary_text_style());
 
-            Row::new(vec![staged_cell, path_cell, status_cell, size_cell])
+            Row::new(vec![path_cell, status_cell, size_cell])
         })
         .collect();
 
@@ -97,8 +85,7 @@ pub fn render_status_tab(f: &mut Frame, area: Rect, state: &mut AppState) {
     let table = Table::new(
         rows,
         [
-            Constraint::Length(6),      // Staged indicator
-            Constraint::Percentage(55), // File path takes most space
+            Constraint::Percentage(60), // File path takes most space
             Constraint::Percentage(25), // Status column
             Constraint::Percentage(15), // Size column
         ],
