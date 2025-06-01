@@ -614,8 +614,17 @@ impl AppState {
             return Err("Commit message cannot be empty".into());
         }
 
+        // Start loading indicator
+        self.start_loading("Creating commit...");
+
         // Perform the commit
-        commit(&commit_message)?;
+        let result = commit(&commit_message);
+
+        // Stop loading indicator
+        self.stop_loading();
+
+        // Handle result
+        result?;
 
         // Clear commit message
         self.commit_message = tui_textarea::TextArea::new(vec![String::new()]);

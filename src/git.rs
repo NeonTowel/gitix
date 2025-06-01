@@ -1252,3 +1252,60 @@ pub fn refresh_remote_status() -> Result<(RemoteStatus, SyncOperation), GitError
 
     Ok((remote_status, refresh_op))
 }
+
+/// Get the current branch name
+pub fn get_current_branch() -> Result<String, GitError> {
+    // Try git2-rs first
+    match get_current_branch_git2() {
+        Ok(branch) => Ok(branch),
+        Err(_) => get_current_branch_fallback(),
+    }
+}
+
+/// Get current branch using git2-rs
+fn get_current_branch_git2() -> Result<String, GitError> {
+    let repo = git2::Repository::open(".")?;
+    let head = repo.head()?;
+
+    if let Some(branch_name) = head.shorthand() {
+        Ok(branch_name.to_string())
+    } else {
+        Ok("HEAD".to_string())
+    }
+}
+
+/// Get current branch using git command fallback
+fn get_current_branch_fallback() -> Result<String, GitError> {
+    let output = std::process::Command::new("git")
+        .args(&["branch", "--show-current"])
+        .output()
+        .map_err(GitError::Io)?;
+
+    if output.status.success() {
+        let branch_name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if branch_name.is_empty() {
+            Ok("HEAD".to_string())
+        } else {
+            Ok(branch_name)
+        }
+    } else {
+        Ok("HEAD".to_string())
+    }
+}
+
+/// Get the current remote tracking branch name
+pub fn get_current_remote_branch() -> Result<Option<String>, GitError> {
+    let repo = git2::Repository::open(".")?;
+    let head = repo.head()?;
+
+    if let Some(branch_name) = head.shorthand() {
+        // Check if there's a remote tracking branch
+        let remote_branch_name = format!("origin/{}", branch_name);
+        match repo.find_branch(&remote_branch_name, git2::BranchType::Remote) {
+            Ok(_) => Ok(Some(remote_branch_name)),
+            Err(_) => Ok(None),
+        }
+    } else {
+        Ok(None)
+    }
+}

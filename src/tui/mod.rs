@@ -161,23 +161,93 @@ pub fn start_tui(state: &mut AppState) {
                 }
 
                 // Status bar with key hints (crust background per guidelines)
-                let hints = match active_tab {
-                    1 => "[Tab] Next Tab  [Shift+Tab] Previous Tab  [↑↓] Navigate  [Enter] Open  [q] Quit",
-                    2 if state.git_enabled && state.show_commit_help => "[Enter] OK  [Esc] Close Help",
-                    2 if state.git_enabled && state.show_template_popup => "[←→] Navigate  [Enter] Apply  [Esc] Cancel",
-                    2 if state.git_enabled => "[Tab] Next Tab  [↑↓] Navigate  [Space] Stage/Unstage  [Enter] Commit  [Shift+?] Help  [Shift+T] Template  [q] Quit",
-                    3 if state.git_enabled => "[Tab] Next Tab  [Shift+Tab] Previous Tab  [Shift+R] Refresh  [P] Pull  [U] Push  [q] Quit",
-                    _ => "[Tab] Next Tab  [Shift+Tab] Previous Tab  [q] Quit",
+                let hints = if state.is_loading {
+                    // Show loading indicator - simplified
+                    "⟳ Loading...".to_string()
+                } else {
+                    match active_tab {
+                        1 => "[Tab] Next Tab  [Shift+Tab] Previous Tab  [↑↓] Navigate  [Enter] Open  [q] Quit",
+                        2 if state.git_enabled && state.show_commit_help => "[Enter] OK  [Esc] Close Help",
+                        2 if state.git_enabled && state.show_template_popup => "[←→] Navigate  [Enter] Apply  [Esc] Cancel",
+                        2 if state.git_enabled => "[Tab] Next Tab  [↑↓] Navigate  [Space] Stage/Unstage  [Enter] Commit  [Shift+?] Help  [Shift+T] Template  [q] Quit",
+                        3 if state.git_enabled => "[Tab] Next Tab  [Shift+Tab] Previous Tab  [Shift+R] Refresh  [P] Pull  [U] Push  [q] Quit",
+                        _ => "[Tab] Next Tab  [Shift+Tab] Previous Tab  [q] Quit",
+                    }.to_string()
                 };
-                let hint_paragraph = Paragraph::new(hints)
-                    .alignment(ratatui::layout::Alignment::Center)
-                    .style(theme.status_bar_style()); // Crust background with text color
-                f.render_widget(hint_paragraph, chunks[2]);
+
+                // Create status bar - drop branch info when loading to save space
+                if state.git_enabled && !state.is_loading {
+                    // Build status line with branch info and hints (only when not loading)
+                    let mut status_spans = Vec::new();
+
+                    // Get current branch information when not loading
+                    let (current_branch, remote_branch) = if let (Ok(current), Ok(remote)) = 
+                        (crate::git::get_current_branch(), crate::git::get_current_remote_branch()) {
+                        (Some(current), remote)
+                    } else {
+                        (None, None)
+                    };
+
+                    // Add branch information at the beginning
+                    if let Some(branch) = current_branch {
+                        // Local branch with parentheses
+                        status_spans.push(ratatui::text::Span::styled("(", theme.accent_style()));
+                        status_spans.push(ratatui::text::Span::styled(branch, theme.accent_style()));
+                        status_spans.push(ratatui::text::Span::styled(")", theme.accent_style()));
+
+                        // Add remote branch if available
+                        if let Some(remote) = remote_branch {
+                            // Remove redundant "origin/" prefix if present
+                            let clean_remote = if remote.starts_with("origin/origin/") {
+                                remote.strip_prefix("origin/").unwrap_or(&remote).to_string()
+                            } else {
+                                remote
+                            };
+                            
+                            status_spans.push(ratatui::text::Span::raw(" "));
+                            status_spans.push(ratatui::text::Span::styled("(", theme.accent3_style()));
+                            status_spans.push(ratatui::text::Span::styled(clean_remote, theme.accent3_style()));
+                            status_spans.push(ratatui::text::Span::styled(")", theme.accent3_style()));
+                        }
+
+                        status_spans.push(ratatui::text::Span::raw("  |  "));
+                    }
+
+                    // Add the hints
+                    status_spans.push(ratatui::text::Span::styled(hints, theme.status_bar_style()));
+
+                    let status_line = ratatui::text::Line::from(status_spans);
+                    let hint_paragraph = Paragraph::new(status_line)
+                        .alignment(ratatui::layout::Alignment::Center);
+                    f.render_widget(hint_paragraph, chunks[2]);
+                } else {
+                    // No git or loading - just show hints (simplified when loading)
+                    let hint_paragraph = Paragraph::new(hints)
+                        .alignment(ratatui::layout::Alignment::Center)
+                        .style(if state.is_loading { 
+                            theme.info_style() 
+                        } else { 
+                            theme.status_bar_style() 
+                        });
+                    f.render_widget(hint_paragraph, chunks[2]);
+                }
             })
             .unwrap();
 
+        // Perform any pending refresh work immediately after UI is drawn
+        // This ensures the loading indicator is visible before the blocking operation
+        if state.pending_refresh_work {
+            state.perform_refresh_work();
+        }
+
         // Handle input
-        if event::poll(std::time::Duration::from_millis(100)).unwrap() {
+        let poll_timeout = if state.is_loading { 
+            std::time::Duration::from_millis(100) // Reasonable timeout for spinner animation
+        } else { 
+            std::time::Duration::from_millis(100) // Normal timeout
+        };
+        
+        if event::poll(poll_timeout).unwrap() {
             if let Event::Key(key_event) = event::read().unwrap() {
                 if key_event.kind == KeyEventKind::Press {
                     // If showing error popup, only handle Enter/Esc to close it

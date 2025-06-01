@@ -55,6 +55,12 @@ pub struct AppState {
     pub show_error_popup: bool,      // Whether to show error popup
     pub error_popup_title: String,   // Title of the error popup
     pub error_popup_message: String, // Error message to display
+
+    // Loading indicator state
+    pub is_loading: bool, // Whether a long-running operation is in progress
+    pub loading_message: String, // Message to show while loading
+    pub spinner_state: usize, // Current spinner animation frame
+    pub pending_refresh_work: bool, // Whether refresh work is pending (to show loading indicator first)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -144,6 +150,12 @@ impl Default for AppState {
             show_error_popup: false,
             error_popup_title: String::new(),
             error_popup_message: String::new(),
+
+            // Loading indicator state
+            is_loading: false,
+            loading_message: String::new(),
+            spinner_state: 0,
+            pending_refresh_work: false,
         };
         state.check_git_status();
         state.load_settings();
@@ -352,6 +364,21 @@ impl AppState {
 
     /// Refresh remote status for update tab
     pub fn refresh_update_remote_status(&mut self) {
+        // Start loading indicator with generic message
+        self.start_loading("Loading...");
+        // Set flag to perform work in next UI cycle
+        self.pending_refresh_work = true;
+    }
+
+    /// Perform the actual refresh work (called after loading indicator is shown)
+    pub fn perform_refresh_work(&mut self) {
+        if !self.is_loading || !self.pending_refresh_work {
+            return; // Not in loading state or no work pending
+        }
+
+        // Clear the pending work flag
+        self.pending_refresh_work = false;
+
         match crate::git::refresh_remote_status() {
             Ok((remote_status, sync_operation)) => {
                 self.update_remote_status = Some(remote_status);
@@ -374,10 +401,16 @@ impl AppState {
                 self.add_sync_operation(error_operation);
             }
         }
+
+        // Stop loading indicator
+        self.stop_loading();
     }
 
     /// Perform pull operation
     pub fn perform_pull(&mut self) {
+        // Start loading indicator
+        self.start_loading("Downloading changes from remote...");
+
         match crate::git::pull_origin(self.pull_rebase) {
             Ok(sync_operation) => {
                 self.add_sync_operation(sync_operation);
@@ -403,10 +436,16 @@ impl AppState {
                 self.add_sync_operation(error_operation);
             }
         }
+
+        // Stop loading indicator
+        self.stop_loading();
     }
 
     /// Perform push operation
     pub fn perform_push(&mut self) {
+        // Start loading indicator
+        self.start_loading("Uploading changes to remote...");
+
         match crate::git::push_origin() {
             Ok(sync_operation) => {
                 self.add_sync_operation(sync_operation);
@@ -432,6 +471,9 @@ impl AppState {
                 self.add_sync_operation(error_operation);
             }
         }
+
+        // Stop loading indicator
+        self.stop_loading();
     }
 
     /// Add a sync operation to the recent operations list
@@ -473,5 +515,36 @@ impl AppState {
         self.show_error_popup = false;
         self.error_popup_title.clear();
         self.error_popup_message.clear();
+    }
+
+    /// Start a loading operation with a message
+    pub fn start_loading(&mut self, message: &str) {
+        self.is_loading = true;
+        self.loading_message = message.to_string();
+        self.spinner_state = 0;
+    }
+
+    /// Stop the loading operation
+    pub fn stop_loading(&mut self) {
+        self.is_loading = false;
+        self.loading_message.clear();
+        self.spinner_state = 0;
+    }
+
+    /// Update the spinner animation (call this periodically during loading)
+    pub fn update_spinner(&mut self) {
+        if self.is_loading {
+            self.spinner_state = (self.spinner_state + 1) % 4; // 4-frame spinner animation
+        }
+    }
+
+    /// Get the current spinner character
+    pub fn get_spinner_char(&self) -> &'static str {
+        const SPINNER_CHARS: [&str; 4] = [".", "..", "...", "...."];
+        if self.is_loading {
+            SPINNER_CHARS[self.spinner_state % 4]
+        } else {
+            ""
+        }
     }
 }
