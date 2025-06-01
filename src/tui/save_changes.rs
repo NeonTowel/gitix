@@ -13,6 +13,16 @@ use std::path::PathBuf;
 pub fn render_save_changes_tab(f: &mut Frame, area: Rect, state: &mut AppState) {
     let theme = Theme::new();
 
+    // Load git status cache if not already loaded (when tab becomes active)
+    state.load_save_changes_git_status();
+
+    // Safety check: ensure focus is on commit message if there are no changes to commit
+    if state.save_changes_git_status.is_empty()
+        && state.save_changes_focus == SaveChangesFocus::FileList
+    {
+        state.save_changes_focus = SaveChangesFocus::CommitMessage;
+    }
+
     // Set panel background
     f.render_widget(
         Block::default().style(theme.secondary_background_style()),
@@ -73,26 +83,7 @@ pub fn render_save_changes_tab(f: &mut Frame, area: Rect, state: &mut AppState) 
 fn render_file_list(f: &mut Frame, area: Rect, state: &mut AppState) {
     let theme = Theme::new();
 
-    let git_status = match get_git_status() {
-        Ok(files) => files,
-        Err(e) => {
-            let error_paragraph = Paragraph::new(format!("Error reading repository: {}", e))
-                .alignment(Alignment::Center)
-                .style(theme.error_style())
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .title("Save Changes - Error")
-                        .title_style(theme.title_style())
-                        .border_style(theme.border_style())
-                        .style(theme.secondary_background_style()),
-                );
-            f.render_widget(error_paragraph, area);
-            return;
-        }
-    };
-
-    if git_status.is_empty() {
+    if state.save_changes_git_status.is_empty() {
         let clean_paragraph =
             Paragraph::new("✓ No changes to commit\n\nYour working directory is clean.")
                 .alignment(Alignment::Center)
@@ -110,9 +101,9 @@ fn render_file_list(f: &mut Frame, area: Rect, state: &mut AppState) {
     }
 
     // Ensure table state selection is valid
-    if !git_status.is_empty() {
+    if !state.save_changes_git_status.is_empty() {
         let current_selection = state.save_changes_table_state.selected().unwrap_or(0);
-        if current_selection >= git_status.len() {
+        if current_selection >= state.save_changes_git_status.len() {
             state.save_changes_table_state.select(Some(0));
         } else if state.save_changes_table_state.selected().is_none() {
             state.save_changes_table_state.select(Some(0));
@@ -128,7 +119,8 @@ fn render_file_list(f: &mut Frame, area: Rect, state: &mut AppState) {
     ]);
 
     // Create table rows
-    let rows: Vec<Row> = git_status
+    let rows: Vec<Row> = state
+        .save_changes_git_status
         .iter()
         .map(|file| {
             let is_staged = file.staged; // Use staging info from git status directly
@@ -166,7 +158,11 @@ fn render_file_list(f: &mut Frame, area: Rect, state: &mut AppState) {
     };
 
     // Count staged files from git status
-    let staged_count = git_status.iter().filter(|f| f.staged).count();
+    let staged_count = state
+        .save_changes_git_status
+        .iter()
+        .filter(|f| f.staged)
+        .count();
 
     // Create the table
     let table = Table::new(
@@ -185,7 +181,7 @@ fn render_file_list(f: &mut Frame, area: Rect, state: &mut AppState) {
             .border_style(border_style)
             .title(format!(
                 "Files to Commit ({} total, {} staged) - [Space] to stage/unstage",
-                git_status.len(),
+                state.save_changes_git_status.len(),
                 staged_count
             ))
             .title_style(theme.title_style())
@@ -260,8 +256,11 @@ fn render_commit_area(f: &mut Frame, area: Rect, state: &mut AppState) {
     }
 
     // Render status/buttons area
-    let git_status = get_git_status().unwrap_or_default();
-    let staged_count = git_status.iter().filter(|f| f.staged).count();
+    let staged_count = state
+        .save_changes_git_status
+        .iter()
+        .filter(|f| f.staged)
+        .count();
     let status_text = if staged_count > 0 {
         format!(
             "Ready to commit {} file(s) - [Enter] to commit",
@@ -570,11 +569,11 @@ fn render_template_popup(f: &mut Frame, area: Rect, state: &AppState) {
 // Helper functions for handling user input
 impl AppState {
     pub fn toggle_file_staging(&mut self) {
-        if let Ok(git_status) = get_git_status() {
+        if !self.save_changes_git_status.is_empty() {
             if let Some(selected_idx) = self.save_changes_table_state.selected() {
-                if selected_idx < git_status.len() {
-                    let file_path = &git_status[selected_idx].path;
-                    let is_currently_staged = git_status[selected_idx].staged;
+                if selected_idx < self.save_changes_git_status.len() {
+                    let file_path = &self.save_changes_git_status[selected_idx].path;
+                    let is_currently_staged = self.save_changes_git_status[selected_idx].staged;
 
                     if is_currently_staged {
                         // Unstage the file
@@ -583,15 +582,21 @@ impl AppState {
                         // Stage the file
                         let _ = stage_file(file_path);
                     }
+
+                    // Refresh git status cache after staging/unstaging
+                    self.refresh_save_changes_git_status();
                 }
             }
         }
     }
 
     pub fn commit_staged_files(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        // Check if there are any staged files from git status
-        let git_status = get_git_status().unwrap_or_default();
-        let staged_count = git_status.iter().filter(|f| f.staged).count();
+        // Check if there are any staged files from cached git status
+        let staged_count = self
+            .save_changes_git_status
+            .iter()
+            .filter(|f| f.staged)
+            .count();
 
         if staged_count == 0 {
             return Err("No files staged for commit".into());
@@ -608,10 +613,20 @@ impl AppState {
         // Clear commit message
         self.commit_message = tui_textarea::TextArea::new(vec![String::new()]);
 
+        // Refresh git status cache after commit
+        self.refresh_save_changes_git_status();
+
         Ok(())
     }
 
     pub fn switch_save_changes_focus(&mut self) {
+        // Only allow focus switching if there are changes to commit
+        if self.save_changes_git_status.is_empty() {
+            // No changes to commit, keep focus on commit message
+            self.save_changes_focus = SaveChangesFocus::CommitMessage;
+            return;
+        }
+
         self.save_changes_focus = match self.save_changes_focus {
             SaveChangesFocus::FileList => SaveChangesFocus::CommitMessage,
             SaveChangesFocus::CommitMessage => SaveChangesFocus::FileList,
@@ -626,14 +641,13 @@ impl AppState {
                 let cursor_row = self.commit_message.cursor().0;
                 let total_lines = self.commit_message.lines().len();
                 if cursor_row >= total_lines.saturating_sub(1) {
-                    // At bottom of commit message, move to file list
-                    self.save_changes_focus = SaveChangesFocus::FileList;
-                    // Select the first item in the file list
-                    if let Ok(git_status) = get_git_status() {
-                        if !git_status.is_empty() {
-                            self.save_changes_table_state.select(Some(0));
-                        }
+                    // At bottom of commit message, only move to file list if there are changes
+                    if !self.save_changes_git_status.is_empty() {
+                        self.save_changes_focus = SaveChangesFocus::FileList;
+                        // Select the first item in the file list
+                        self.save_changes_table_state.select(Some(0));
                     }
+                    // If no changes, stay in commit message (do nothing)
                 } else {
                     // Move down within the commit message
                     self.commit_message
@@ -641,16 +655,14 @@ impl AppState {
                 }
             }
             SaveChangesFocus::FileList => {
-                if let Ok(git_status) = get_git_status() {
-                    if !git_status.is_empty() {
-                        let current = self.save_changes_table_state.selected().unwrap_or(0);
-                        if current < git_status.len() - 1 {
-                            // Move down in the file list
-                            let next = current + 1;
-                            self.save_changes_table_state.select(Some(next));
-                        }
-                        // If at the last item, stay there (no wrapping to commit message)
+                if !self.save_changes_git_status.is_empty() {
+                    let current = self.save_changes_table_state.selected().unwrap_or(0);
+                    if current < self.save_changes_git_status.len() - 1 {
+                        // Move down in the file list
+                        let next = current + 1;
+                        self.save_changes_table_state.select(Some(next));
                     }
+                    // If at the last item, stay there (no wrapping to commit message)
                 }
             }
         }
@@ -660,24 +672,22 @@ impl AppState {
     pub fn save_changes_navigate_up(&mut self) {
         match self.save_changes_focus {
             SaveChangesFocus::FileList => {
-                if let Ok(git_status) = get_git_status() {
-                    if !git_status.is_empty() {
-                        let current = self.save_changes_table_state.selected().unwrap_or(0);
-                        if current > 0 {
-                            // Move up in the file list
-                            let prev = current - 1;
-                            self.save_changes_table_state.select(Some(prev));
-                        } else {
-                            // At first item in file list, move back to commit message
-                            self.save_changes_focus = SaveChangesFocus::CommitMessage;
-                            // Move cursor to the end of the commit message
-                            self.commit_message
-                                .move_cursor(tui_textarea::CursorMove::End);
-                        }
+                if !self.save_changes_git_status.is_empty() {
+                    let current = self.save_changes_table_state.selected().unwrap_or(0);
+                    if current > 0 {
+                        // Move up in the file list
+                        let prev = current - 1;
+                        self.save_changes_table_state.select(Some(prev));
                     } else {
-                        // No files, move to commit message
+                        // At first item in file list, move back to commit message
                         self.save_changes_focus = SaveChangesFocus::CommitMessage;
+                        // Move cursor to the end of the commit message
+                        self.commit_message
+                            .move_cursor(tui_textarea::CursorMove::End);
                     }
+                } else {
+                    // No files, move to commit message
+                    self.save_changes_focus = SaveChangesFocus::CommitMessage;
                 }
             }
             SaveChangesFocus::CommitMessage => {

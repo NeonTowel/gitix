@@ -16,26 +16,10 @@ pub fn render_status_tab(f: &mut Frame, area: Rect, state: &mut AppState) {
         area,
     );
 
-    let git_status = match get_git_status() {
-        Ok(files) => files,
-        Err(e) => {
-            let error_paragraph = Paragraph::new(format!("Error reading repository: {}", e))
-                .alignment(Alignment::Center)
-                .style(theme.error_style())
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .title("Repository Status")
-                        .title_style(theme.title_style())
-                        .border_style(theme.border_style())
-                        .style(theme.secondary_background_style()),
-                );
-            f.render_widget(error_paragraph, area);
-            return;
-        }
-    };
+    // Load git status cache if not already loaded (when tab becomes active)
+    state.load_status_git_status();
 
-    if git_status.is_empty() {
+    if state.status_git_status.is_empty() {
         let clean_paragraph = Paragraph::new(
             "✓ No changes detected\n\nYour working directory is clean and matches the last commit.",
         )
@@ -54,9 +38,9 @@ pub fn render_status_tab(f: &mut Frame, area: Rect, state: &mut AppState) {
     }
 
     // Ensure table state selection is valid
-    if !git_status.is_empty() {
+    if !state.status_git_status.is_empty() {
         let current_selection = state.status_table_state.selected().unwrap_or(0);
-        if current_selection >= git_status.len() {
+        if current_selection >= state.status_git_status.len() {
             state.status_table_state.select(Some(0));
         } else if state.status_table_state.selected().is_none() {
             // Initialize selection to first item if nothing is selected
@@ -72,7 +56,8 @@ pub fn render_status_tab(f: &mut Frame, area: Rect, state: &mut AppState) {
     ]);
 
     // Create table rows
-    let rows: Vec<Row> = git_status
+    let rows: Vec<Row> = state
+        .status_git_status
         .iter()
         .map(|file| {
             let path_cell = Cell::from(file.path.display().to_string()).style(theme.text_style());
@@ -103,7 +88,10 @@ pub fn render_status_tab(f: &mut Frame, area: Rect, state: &mut AppState) {
     .block(
         Block::default()
             .borders(Borders::ALL)
-            .title(format!("Repository Changes ({} files)", git_status.len()))
+            .title(format!(
+                "Repository Changes ({} files)",
+                state.status_git_status.len()
+            ))
             .title_style(theme.title_style())
             .border_style(theme.border_style())
             .style(theme.secondary_background_style()),

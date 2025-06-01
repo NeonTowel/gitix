@@ -22,6 +22,14 @@ pub struct AppState {
     pub help_popup_scrollbar_state: ScrollbarState, // Scrollbar state for help popup
     pub show_template_popup: bool,            // Whether to show template selection popup
     pub template_popup_selection: TemplatePopupSelection, // Which button is selected in template popup
+
+    // Git status caching for save changes tab
+    pub save_changes_git_status: Vec<crate::git::GitFileStatus>, // Cached git status for save changes tab
+    pub save_changes_git_status_loaded: bool, // Whether git status has been loaded for save changes tab
+
+    // Git status caching for status tab
+    pub status_git_status: Vec<crate::git::GitFileStatus>, // Cached git status for status tab
+    pub status_git_status_loaded: bool, // Whether git status has been loaded for status tab
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -56,6 +64,10 @@ impl Default for AppState {
             help_popup_scrollbar_state: ScrollbarState::default(),
             show_template_popup: false,
             template_popup_selection: TemplatePopupSelection::No,
+            save_changes_git_status: Vec::new(),
+            save_changes_git_status_loaded: false,
+            status_git_status: Vec::new(),
+            status_git_status_loaded: false,
         };
         state.check_git_status();
         state
@@ -140,6 +152,48 @@ impl AppState {
         }
         self.show_template_popup = false;
     }
+
+    /// Load git status for save changes tab (called when tab becomes active)
+    pub fn load_save_changes_git_status(&mut self) {
+        if !self.save_changes_git_status_loaded {
+            self.save_changes_git_status = crate::git::get_git_status().unwrap_or_default();
+            self.save_changes_git_status_loaded = true;
+        }
+    }
+
+    /// Refresh git status for save changes tab (called after staging/unstaging operations)
+    pub fn refresh_save_changes_git_status(&mut self) {
+        self.save_changes_git_status = crate::git::get_git_status().unwrap_or_default();
+        self.save_changes_git_status_loaded = true;
+    }
+
+    /// Get cached git status for save changes tab
+    pub fn get_save_changes_git_status(&self) -> &[crate::git::GitFileStatus] {
+        &self.save_changes_git_status
+    }
+
+    /// Mark git status as needing refresh (called when leaving save changes tab)
+    pub fn invalidate_save_changes_git_status(&mut self) {
+        self.save_changes_git_status_loaded = false;
+    }
+
+    /// Load git status for status tab (called when tab becomes active)
+    pub fn load_status_git_status(&mut self) {
+        if !self.status_git_status_loaded {
+            self.status_git_status = crate::git::get_git_status().unwrap_or_default();
+            self.status_git_status_loaded = true;
+        }
+    }
+
+    /// Get cached git status for status tab
+    pub fn get_status_git_status(&self) -> &[crate::git::GitFileStatus] {
+        &self.status_git_status
+    }
+
+    /// Mark git status as needing refresh (called when leaving status tab)
+    pub fn invalidate_status_git_status(&mut self) {
+        self.status_git_status_loaded = false;
+    }
 }
 
 pub fn run() {
@@ -164,6 +218,10 @@ pub fn run() {
         help_popup_scrollbar_state: ScrollbarState::default(),
         show_template_popup: false,
         template_popup_selection: TemplatePopupSelection::No,
+        save_changes_git_status: Vec::new(),
+        save_changes_git_status_loaded: false,
+        status_git_status: Vec::new(),
+        status_git_status_loaded: false,
     };
     state.check_git_status();
 

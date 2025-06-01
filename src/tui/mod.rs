@@ -182,12 +182,28 @@ pub fn start_tui(state: &mut AppState) {
                             while !state.git_enabled && next_tab > 1 {
                                 next_tab = (next_tab + 1) % tab_count;
                             }
+                            // Invalidate save changes git status cache when leaving save changes tab
+                            if active_tab == 3 && next_tab != 3 {
+                                state.invalidate_save_changes_git_status();
+                            }
+                            // Invalidate status git status cache when leaving status tab
+                            if active_tab == 2 && next_tab != 2 {
+                                state.invalidate_status_git_status();
+                            }
                             active_tab = next_tab;
                         }
                         (KeyCode::BackTab, _) | (KeyCode::Tab, KeyModifiers::SHIFT) => {
                             let mut prev_tab = (active_tab + tab_count - 1) % tab_count;
                             while !state.git_enabled && prev_tab > 1 {
                                 prev_tab = (prev_tab + tab_count - 1) % tab_count;
+                            }
+                            // Invalidate save changes git status cache when leaving save changes tab
+                            if active_tab == 3 && prev_tab != 3 {
+                                state.invalidate_save_changes_git_status();
+                            }
+                            // Invalidate status git status cache when leaving status tab
+                            if active_tab == 2 && prev_tab != 2 {
+                                state.invalidate_status_git_status();
                             }
                             active_tab = prev_tab;
                         }
@@ -214,22 +230,18 @@ pub fn start_tui(state: &mut AppState) {
                         }
                         (KeyCode::Down, _) if active_tab == 2 => {
                             // Status tab: move selection down
-                            if let Ok(git_status) = get_git_status() {
-                                if !git_status.is_empty() {
-                                    let current = state.status_table_state.selected().unwrap_or(0);
-                                    let next = (current + 1).min(git_status.len() - 1);
-                                    state.status_table_state.select(Some(next));
-                                }
+                            if !state.status_git_status.is_empty() {
+                                let current = state.status_table_state.selected().unwrap_or(0);
+                                let next = (current + 1).min(state.status_git_status.len() - 1);
+                                state.status_table_state.select(Some(next));
                             }
                         }
                         (KeyCode::Up, _) if active_tab == 2 => {
                             // Status tab: move selection up
-                            if let Ok(git_status) = get_git_status() {
-                                if !git_status.is_empty() {
-                                    let current = state.status_table_state.selected().unwrap_or(0);
-                                    let prev = current.saturating_sub(1);
-                                    state.status_table_state.select(Some(prev));
-                                }
+                            if !state.status_git_status.is_empty() {
+                                let current = state.status_table_state.selected().unwrap_or(0);
+                                let prev = current.saturating_sub(1);
+                                state.status_table_state.select(Some(prev));
                             }
                         }
                         (KeyCode::Enter, _) if active_tab == 1 => {
