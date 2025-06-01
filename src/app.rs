@@ -12,9 +12,6 @@ pub struct AppState {
     pub current_dir: PathBuf,       // The directory currently being browsed
     pub files_selected_row: usize,  // Selected row in files tab
 
-    // Table states for various tabs
-    pub status_table_state: TableState, // Table state for status tab scrolling
-
     // Save changes tab state
     pub save_changes_table_state: TableState, // Table state for save changes file list
     pub staged_files: Vec<PathBuf>,           // Files staged for commit
@@ -42,9 +39,9 @@ pub struct AppState {
     pub save_changes_git_status: Vec<crate::git::GitFileStatus>, // Cached git status for save changes tab
     pub save_changes_git_status_loaded: bool, // Whether git status has been loaded for save changes tab
 
-    // Git status caching for status tab
-    pub status_git_status: Vec<crate::git::GitFileStatus>, // Cached git status for status tab
-    pub status_git_status_loaded: bool, // Whether git status has been loaded for status tab
+    // Git status caching for files tab (reused from old status tab)
+    pub status_git_status: Vec<crate::git::GitFileStatus>, // Cached git status for files tab
+    pub status_git_status_loaded: bool, // Whether git status has been loaded for files tab
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -89,7 +86,6 @@ impl Default for AppState {
             root_dir: cwd.clone(),
             current_dir: cwd,
             files_selected_row: 0,
-            status_table_state: TableState::default(),
             save_changes_table_state: TableState::default(),
             staged_files: Vec::new(),
             commit_message: TextArea::new(vec![String::new()]),
@@ -108,7 +104,7 @@ impl Default for AppState {
             user_email_input: TextArea::new(vec![String::new()]),
             current_theme_accent: AccentColor::Blue,
             current_theme_accent2: AccentColor::Rosewater,
-            current_theme_accent3: AccentColor::Mauve,
+            current_theme_accent3: AccentColor::Pink,
             current_theme_title: TitleColor::Overlay0,
             settings_status_message: None,
 
@@ -294,7 +290,7 @@ impl AppState {
         self.save_changes_git_status_loaded = false;
     }
 
-    /// Load git status for status tab (called when tab becomes active)
+    /// Load git status for files tab (called when tab becomes active)
     pub fn load_status_git_status(&mut self) {
         if !self.status_git_status_loaded {
             self.status_git_status = crate::git::get_git_status().unwrap_or_default();
@@ -302,12 +298,12 @@ impl AppState {
         }
     }
 
-    /// Get cached git status for status tab
+    /// Get cached git status for files tab
     pub fn get_status_git_status(&self) -> &[crate::git::GitFileStatus] {
         &self.status_git_status
     }
 
-    /// Mark git status as needing refresh (called when leaving status tab)
+    /// Mark git status as needing refresh (called when leaving files tab)
     pub fn invalidate_status_git_status(&mut self) {
         self.status_git_status_loaded = false;
     }

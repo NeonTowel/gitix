@@ -60,7 +60,7 @@ fn render_author_panel(f: &mut Frame, area: Rect, state: &AppState, theme: &Them
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .title("👤 Author Configuration")
+        .title("Author Configuration")
         .title_style(theme.title_style())
         .border_style(border_style)
         .style(theme.secondary_background_style());
@@ -172,32 +172,24 @@ fn render_author_panel(f: &mut Frame, area: Rect, state: &AppState, theme: &Them
 
     // Help text
     let help_lines = vec![
-        Line::from(vec![
-            Span::styled("💡 ", Style::default().fg(theme.sky)),
-            Span::styled(
-                "These settings configure your Git identity",
-                theme.secondary_text_style(),
-            ),
-        ]),
+        Line::from(vec![Span::styled(
+            "These settings configure your Git identity",
+            theme.secondary_text_style(),
+        )]),
         Line::from(""),
         Line::from(vec![
-            Span::styled("• ", theme.secondary_text_style()),
             Span::styled("Name: ", theme.stats_label_style()),
             Span::styled("Used for commit authorship", theme.secondary_text_style()),
         ]),
         Line::from(vec![
-            Span::styled("• ", theme.secondary_text_style()),
             Span::styled("Email: ", theme.stats_label_style()),
             Span::styled("Associated with your commits", theme.secondary_text_style()),
         ]),
         Line::from(""),
-        Line::from(vec![
-            Span::styled("💾 ", Style::default().fg(theme.yellow)),
-            Span::styled(
-                "Press Ctrl+S to save changes to git config",
-                theme.muted_text_style(),
-            ),
-        ]),
+        Line::from(vec![Span::styled(
+            "Press Ctrl+S to save changes to git config",
+            theme.muted_text_style(),
+        )]),
     ];
 
     let help_paragraph = Paragraph::new(help_lines).wrap(Wrap { trim: false });
@@ -215,7 +207,7 @@ fn render_theme_panel(f: &mut Frame, area: Rect, state: &AppState, theme: &Theme
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .title("🎨 Theme Configuration")
+        .title("Theme Configuration")
         .title_style(theme.title_style())
         .border_style(border_style)
         .style(theme.secondary_background_style());
@@ -427,13 +419,12 @@ fn render_theme_preview(f: &mut Frame, area: Rect, state: &AppState, theme: &The
 
     // Help text
     let help_lines = vec![
-        Line::from(vec![
-            Span::styled("🎨 ", Style::default().fg(theme.pink)),
-            Span::styled("Catppuccin Macchiato Theme", theme.secondary_text_style()),
-        ]),
+        Line::from(vec![Span::styled(
+            "Catppuccin Macchiato Theme",
+            theme.secondary_text_style(),
+        )]),
         Line::from(""),
         Line::from(vec![
-            Span::styled("• ", theme.secondary_text_style()),
             Span::styled("Primary: ", theme.stats_label_style()),
             Span::styled(
                 "Active elements, focus indicators",
@@ -441,23 +432,18 @@ fn render_theme_preview(f: &mut Frame, area: Rect, state: &AppState, theme: &The
             ),
         ]),
         Line::from(vec![
-            Span::styled("• ", theme.secondary_text_style()),
             Span::styled("Secondary: ", theme.stats_label_style()),
             Span::styled("Labels, authors, metadata", theme.secondary_text_style()),
         ]),
         Line::from(vec![
-            Span::styled("• ", theme.secondary_text_style()),
             Span::styled("Tertiary: ", theme.stats_label_style()),
             Span::styled("Timestamps, subtle accents", theme.secondary_text_style()),
         ]),
         Line::from(""),
-        Line::from(vec![
-            Span::styled("💾 ", Style::default().fg(theme.green)),
-            Span::styled(
-                "Saved to git config as gitix.theme.*",
-                theme.muted_text_style(),
-            ),
-        ]),
+        Line::from(vec![Span::styled(
+            "Saved to git config as gitix.theme.*",
+            theme.muted_text_style(),
+        )]),
     ];
 
     let help_paragraph = Paragraph::new(help_lines).wrap(Wrap { trim: false });
@@ -517,7 +503,7 @@ fn render_no_git_message(f: &mut Frame, area: Rect, theme: &Theme) {
     let message = Paragraph::new(vec![
         Line::from(""),
         Line::from(Span::styled(
-            "⚠️  Not a Git Repository",
+            "Not a Git Repository",
             Style::default()
                 .fg(theme.yellow)
                 .add_modifier(Modifier::BOLD),
@@ -527,7 +513,7 @@ fn render_no_git_message(f: &mut Frame, area: Rect, theme: &Theme) {
         Line::from("Initialize a repository first to access settings."),
         Line::from(""),
         Line::from(Span::styled(
-            "💡 Tip:",
+            "Tip:",
             Style::default().fg(theme.sky).add_modifier(Modifier::BOLD),
         )),
         Line::from("Use the Overview tab to initialize a new repository."),

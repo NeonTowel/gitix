@@ -62,10 +62,10 @@ impl SyncOperationType {
 impl OperationStatus {
     fn symbol(&self) -> &'static str {
         match self {
-            OperationStatus::Pending => "⏳",
-            OperationStatus::InProgress => "🔄",
-            OperationStatus::Success => "✅",
-            OperationStatus::Error => "❌",
+            OperationStatus::Pending => "◦",
+            OperationStatus::InProgress => "→",
+            OperationStatus::Success => "✓",
+            OperationStatus::Error => "✗",
         }
     }
 
@@ -80,7 +80,13 @@ impl OperationStatus {
 }
 
 pub fn render_update_tab(f: &mut Frame, area: Rect, state: &AppState) {
-    let theme = Theme::new();
+    // Use configured theme from app state
+    let theme = Theme::with_accents_and_title(
+        state.current_theme_accent,
+        state.current_theme_accent2,
+        state.current_theme_accent3,
+        state.current_theme_title,
+    );
 
     // Set panel background
     f.render_widget(
@@ -110,7 +116,7 @@ fn render_no_git_message(f: &mut Frame, area: Rect, theme: &Theme) {
     let message = Paragraph::new(vec![
         Line::from(""),
         Line::from(Span::styled(
-            "⚠️  Not a Git Repository",
+            "⚠ Not a Git Repository",
             Style::default()
                 .fg(theme.yellow)
                 .add_modifier(Modifier::BOLD),
@@ -120,7 +126,7 @@ fn render_no_git_message(f: &mut Frame, area: Rect, theme: &Theme) {
         Line::from("Initialize a repository first to sync with remotes."),
         Line::from(""),
         Line::from(Span::styled(
-            "💡 Tip:",
+            "• Tip:",
             Style::default().fg(theme.sky).add_modifier(Modifier::BOLD),
         )),
         Line::from("Use the Overview tab to initialize a new repository."),
@@ -142,7 +148,7 @@ fn render_no_remote_message(f: &mut Frame, area: Rect, theme: &Theme) {
     let message = Paragraph::new(vec![
         Line::from(""),
         Line::from(Span::styled(
-            "📡  No Remote Repository",
+            "⚠ No Remote Repository",
             Style::default()
                 .fg(theme.yellow)
                 .add_modifier(Modifier::BOLD),
@@ -152,7 +158,7 @@ fn render_no_remote_message(f: &mut Frame, area: Rect, theme: &Theme) {
         Line::from("Add a remote repository to sync your changes."),
         Line::from(""),
         Line::from(Span::styled(
-            "💡 How to add a remote:",
+            "• How to add a remote:",
             Style::default().fg(theme.sky).add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
@@ -165,15 +171,15 @@ fn render_no_remote_message(f: &mut Frame, area: Rect, theme: &Theme) {
         Line::from(""),
         Line::from("Examples:"),
         Line::from(Span::styled(
-            "• GitHub: git remote add origin https://github.com/user/repo.git",
+            "  ◦ GitHub: git remote add origin https://github.com/user/repo.git",
             theme.muted_text_style(),
         )),
         Line::from(Span::styled(
-            "• GitLab: git remote add origin https://gitlab.com/user/repo.git",
+            "  ◦ GitLab: git remote add origin https://gitlab.com/user/repo.git",
             theme.muted_text_style(),
         )),
         Line::from(Span::styled(
-            "• SSH: git remote add origin git@github.com:user/repo.git",
+            "  ◦ SSH: git remote add origin git@github.com:user/repo.git",
             theme.muted_text_style(),
         )),
     ])
@@ -285,7 +291,7 @@ fn render_download_section(f: &mut Frame, area: Rect, theme: &Theme) {
 
     let download_text = vec![
         Line::from(vec![Span::styled(
-            "📥 Download Changes",
+            "↓ Download Changes",
             Style::default()
                 .fg(theme.green)
                 .add_modifier(Modifier::BOLD),
@@ -306,13 +312,13 @@ fn render_download_section(f: &mut Frame, area: Rect, theme: &Theme) {
         Line::from(vec![Span::styled("Actions:", theme.accent2_style())]),
         if remote.behind > 0 {
             Line::from(vec![
-                Span::raw("• "),
+                Span::raw("  ◦ "),
                 Span::styled("[P] Pull", theme.accent_style()),
                 Span::raw(" - Download changes"),
             ])
         } else {
             Line::from(vec![
-                Span::raw("• "),
+                Span::raw("  ◦ "),
                 Span::styled("[P] Pull", theme.muted_text_style()),
                 Span::raw(" - Nothing to download"),
             ])
@@ -344,7 +350,7 @@ fn render_upload_section(f: &mut Frame, area: Rect, theme: &Theme) {
 
     let upload_text = vec![
         Line::from(vec![Span::styled(
-            "📤 Upload Changes",
+            "↑ Upload Changes",
             Style::default().fg(theme.blue).add_modifier(Modifier::BOLD),
         )]),
         Line::from(""),
@@ -363,13 +369,13 @@ fn render_upload_section(f: &mut Frame, area: Rect, theme: &Theme) {
         Line::from(vec![Span::styled("Actions:", theme.accent2_style())]),
         if remote.ahead > 0 {
             Line::from(vec![
-                Span::raw("• "),
+                Span::raw("  ◦ "),
                 Span::styled("[U] Push", theme.accent_style()),
                 Span::raw(" - Upload changes"),
             ])
         } else {
             Line::from(vec![
-                Span::raw("• "),
+                Span::raw("  ◦ "),
                 Span::styled("[U] Push", theme.muted_text_style()),
                 Span::raw(" - Nothing to upload"),
             ])

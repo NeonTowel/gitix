@@ -128,7 +128,7 @@ impl Theme {
         Self::with_accents(
             AccentColor::Blue,      // Primary accent: blue
             AccentColor::Rosewater, // Secondary accent: rosewater
-            AccentColor::Mauve,     // Tertiary accent: mauve (updated from maroon)
+            AccentColor::Pink,      // Tertiary accent: pink (changed from mauve)
         )
     }
 
@@ -395,7 +395,7 @@ impl Theme {
         Self::with_accents_and_title(
             AccentColor::Blue,      // Primary accent: blue
             AccentColor::Rosewater, // Secondary accent: rosewater
-            AccentColor::Mauve,     // Tertiary accent: mauve (updated from maroon)
+            AccentColor::Pink,      // Tertiary accent: pink (changed from mauve)
             TitleColor::Overlay0,
         )
     }
@@ -405,7 +405,7 @@ impl Theme {
         Self::with_accents_and_title(
             AccentColor::Blue,      // Primary accent: blue
             AccentColor::Rosewater, // Secondary accent: rosewater
-            AccentColor::Mauve,     // Tertiary accent: mauve (updated from maroon)
+            AccentColor::Pink,      // Tertiary accent: pink (changed from mauve)
             TitleColor::Overlay1,
         )
     }
@@ -415,7 +415,7 @@ impl Theme {
         Self::with_accents_and_title(
             AccentColor::Blue,      // Primary accent: blue
             AccentColor::Rosewater, // Secondary accent: rosewater
-            AccentColor::Mauve,     // Tertiary accent: mauve (updated from maroon)
+            AccentColor::Pink,      // Tertiary accent: pink (changed from mauve)
             TitleColor::Overlay2,
         )
     }
@@ -425,7 +425,7 @@ impl Theme {
         Self::with_accents_and_title(
             AccentColor::Blue,      // Primary accent: blue
             AccentColor::Rosewater, // Secondary accent: rosewater
-            AccentColor::Mauve,     // Tertiary accent: mauve (updated from maroon)
+            AccentColor::Pink,      // Tertiary accent: pink (changed from mauve)
             TitleColor::Text,
         )
     }
@@ -435,7 +435,7 @@ impl Theme {
         Self::with_accents_and_title(
             AccentColor::Blue,      // Primary accent: blue
             AccentColor::Rosewater, // Secondary accent: rosewater
-            AccentColor::Mauve,     // Tertiary accent: mauve (updated from maroon)
+            AccentColor::Pink,      // Tertiary accent: pink (changed from mauve)
             TitleColor::Accent(accent),
         )
     }

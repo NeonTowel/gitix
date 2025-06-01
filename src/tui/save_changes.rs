@@ -11,7 +11,13 @@ use ratatui::{layout::Rect, Frame};
 use std::path::PathBuf;
 
 pub fn render_save_changes_tab(f: &mut Frame, area: Rect, state: &mut AppState) {
-    let theme = Theme::new();
+    // Use configured theme from app state
+    let theme = Theme::with_accents_and_title(
+        state.current_theme_accent,
+        state.current_theme_accent2,
+        state.current_theme_accent3,
+        state.current_theme_title,
+    );
 
     // Load git status cache if not already loaded (when tab becomes active)
     state.load_save_changes_git_status();
@@ -66,23 +72,21 @@ pub fn render_save_changes_tab(f: &mut Frame, area: Rect, state: &mut AppState) 
         ])
         .split(area);
 
-    render_commit_area(f, chunks[0], state);
-    render_file_list(f, chunks[1], state);
+    render_commit_area(f, chunks[0], state, &theme);
+    render_file_list(f, chunks[1], state, &theme);
 
     // Render help popup if shown
     if state.show_commit_help {
-        render_commit_help_popup(f, area, state);
+        render_commit_help_popup(f, area, state, &theme);
     }
 
     // Render template popup if shown
     if state.show_template_popup {
-        render_template_popup(f, area, state);
+        render_template_popup(f, area, state, &theme);
     }
 }
 
-fn render_file_list(f: &mut Frame, area: Rect, state: &mut AppState) {
-    let theme = Theme::new();
-
+fn render_file_list(f: &mut Frame, area: Rect, state: &mut AppState, theme: &Theme) {
     if state.save_changes_git_status.is_empty() {
         let clean_paragraph =
             Paragraph::new("✓ No changes to commit\n\nYour working directory is clean.")
@@ -193,9 +197,7 @@ fn render_file_list(f: &mut Frame, area: Rect, state: &mut AppState) {
     f.render_stateful_widget(table, area, &mut state.save_changes_table_state);
 }
 
-fn render_commit_area(f: &mut Frame, area: Rect, state: &mut AppState) {
-    let theme = Theme::new();
-
+fn render_commit_area(f: &mut Frame, area: Rect, state: &mut AppState, theme: &Theme) {
     // Ensure status area is always visible with minimum height
     let min_status_height = 3; // Always keep at least 3 lines for status
     let min_commit_input_height = 3; // Minimum for commit message input
@@ -235,7 +237,7 @@ fn render_commit_area(f: &mut Frame, area: Rect, state: &mut AppState) {
     let commit_block = Block::default()
         .borders(Borders::ALL)
         .border_style(border_style)
-        .title("Commit Message - [↑↓] to navigate, [Shift+?] for help, [Shift+T] for template")
+        .title("✎ Commit Message - [↑↓] to navigate, [Shift+?] for help, [Shift+T] for template")
         .title_style(theme.title_style())
         .style(theme.secondary_background_style());
 
@@ -299,9 +301,7 @@ fn popup_area(area: Rect, percent_x: u16, percent_y: u16) -> Rect {
 }
 
 /// Render the commit message help popup
-fn render_commit_help_popup(f: &mut Frame, area: Rect, state: &mut AppState) {
-    let theme = Theme::new();
-
+fn render_commit_help_popup(f: &mut Frame, area: Rect, state: &mut AppState, theme: &Theme) {
     let popup_area = popup_area(area, 70, 70);
 
     // Clear the background
@@ -448,9 +448,7 @@ fn render_commit_help_popup(f: &mut Frame, area: Rect, state: &mut AppState) {
 }
 
 /// Render the template selection popup
-fn render_template_popup(f: &mut Frame, area: Rect, state: &AppState) {
-    let theme = Theme::new();
-
+fn render_template_popup(f: &mut Frame, area: Rect, state: &AppState, theme: &Theme) {
     let popup_area = popup_area(area, 60, 40);
 
     // Clear the background
@@ -470,7 +468,7 @@ fn render_template_popup(f: &mut Frame, area: Rect, state: &AppState) {
 
     let content_block = Block::default()
         .borders(Borders::ALL)
-        .title("Apply Template")
+        .title("Template Selection")
         .title_style(theme.popup_title_style())
         .border_style(theme.popup_border_style())
         .style(theme.popup_background_style());

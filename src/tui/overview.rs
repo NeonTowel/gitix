@@ -6,7 +6,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::calendar::{CalendarEventStore, Monthly};
 use ratatui::widgets::{Block, Borders, Paragraph, Sparkline};
-use ratatui::{Frame, layout::Rect};
+use ratatui::{layout::Rect, Frame};
 use time::{Date, Month};
 
 // Helper struct for commit information
@@ -92,7 +92,13 @@ fn format_relative_time(timestamp: i64) -> String {
 }
 
 pub fn render_overview_tab(f: &mut Frame, area: Rect, state: &AppState) {
-    let theme = Theme::new();
+    // Use configured theme from app state
+    let theme = Theme::with_accents_and_title(
+        state.current_theme_accent,
+        state.current_theme_accent2,
+        state.current_theme_accent3,
+        state.current_theme_title,
+    );
 
     // Set panel background (mantle per guidelines)
     f.render_widget(
