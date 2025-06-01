@@ -19,6 +19,39 @@ pub enum FileStatusType {
     TypeChange,
 }
 
+#[derive(Debug, Clone)]
+pub struct RemoteStatus {
+    pub name: String,
+    pub url: String,
+    pub ahead: usize,
+    pub behind: usize,
+    pub last_fetch: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SyncOperation {
+    pub operation_type: SyncOperationType,
+    pub status: OperationStatus,
+    pub message: String,
+    pub timestamp: std::time::SystemTime,
+}
+
+#[derive(Debug, Clone)]
+pub enum SyncOperationType {
+    Fetch,
+    Pull,
+    Push,
+    Refresh,
+}
+
+#[derive(Debug, Clone)]
+pub enum OperationStatus {
+    Pending,
+    InProgress,
+    Success,
+    Error,
+}
+
 #[derive(Debug)]
 pub enum GitError {
     Gix(gix::open::Error),
@@ -119,20 +152,14 @@ pub fn init_repo() -> Result<(), gix::init::Error> {
 /// - `repo.status().into_index_worktree_iter()` for unstaged changes ✅
 /// - `repo.head_commit() -> index_from_tree() -> open_index() -> diff` for staged changes ✅
 pub fn get_git_status() -> Result<Vec<GitFileStatus>, Box<dyn std::error::Error>> {
-    let mut files = Vec::new();
-
-    // PHASE 1: Use pure gix for both staged and unstaged changes
+    // Try gix first, but fall back to git command if it fails
     match get_git_status_pure_gix() {
-        Ok(mut gix_files) => {
-            files.append(&mut gix_files);
-        }
-        Err(e) => {
-            eprintln!("Warning: gix failed, falling back to git command: {}", e);
-            return get_git_status_fallback();
+        Ok(status) => Ok(status),
+        Err(_e) => {
+            // Silent fallback to git command - this is expected for some configurations
+            get_git_status_fallback()
         }
     }
-
-    Ok(files)
 }
 
 /// Get git status using pure gix implementation (PHASE 1: PURE GIX IMPLEMENTATION ✅)
@@ -746,4 +773,482 @@ pub fn format_file_size(size: Option<u64>) -> String {
         }
         None => "-".to_string(),
     }
+}
+
+/// Check if repository has a remote origin configured
+pub fn has_remote_origin() -> Result<bool, GitError> {
+    let repo = git2::Repository::open(".")?;
+    let result = repo.find_remote("origin");
+    match result {
+        Ok(_) => Ok(true),
+        Err(e) if e.code() == git2::ErrorCode::NotFound => Ok(false),
+        Err(e) => Err(GitError::Git2(e)),
+    }
+}
+
+/// Get remote status information
+pub fn get_remote_status() -> Result<RemoteStatus, GitError> {
+    let repo = git2::Repository::open(".")?;
+
+    // Get remote origin
+    let remote = repo.find_remote("origin")?;
+    let remote_name = remote.name().unwrap_or("origin").to_string();
+    let remote_url = remote.url().unwrap_or("unknown").to_string();
+
+    // Get ahead/behind counts
+    let (ahead, behind) = get_ahead_behind_counts(&repo)?;
+
+    // Get last fetch time (from reflog)
+    let last_fetch = get_last_fetch_time(&repo);
+
+    Ok(RemoteStatus {
+        name: remote_name,
+        url: remote_url,
+        ahead,
+        behind,
+        last_fetch,
+    })
+}
+
+/// Get ahead/behind counts compared to remote tracking branch
+fn get_ahead_behind_counts(repo: &git2::Repository) -> Result<(usize, usize), GitError> {
+    // Get current branch
+    let head = repo.head()?;
+    let local_oid = head
+        .target()
+        .ok_or_else(|| GitError::Other("No HEAD commit".to_string()))?;
+
+    // Get remote tracking branch
+    let branch_name = head.shorthand().unwrap_or("HEAD");
+    let remote_branch_name = format!("origin/{}", branch_name);
+
+    match repo.find_branch(&remote_branch_name, git2::BranchType::Remote) {
+        Ok(remote_branch) => {
+            let remote_oid = remote_branch
+                .get()
+                .target()
+                .ok_or_else(|| GitError::Other("No remote branch commit".to_string()))?;
+
+            // Calculate ahead/behind
+            let (ahead, behind) = repo.graph_ahead_behind(local_oid, remote_oid)?;
+            Ok((ahead, behind))
+        }
+        Err(_) => {
+            // No remote tracking branch, assume we're ahead by the number of commits
+            let revwalk = repo.revwalk()?;
+            let mut walk = revwalk;
+            walk.push(local_oid)?;
+            let ahead = walk.count();
+            Ok((ahead, 0))
+        }
+    }
+}
+
+/// Get last fetch time from reflog
+fn get_last_fetch_time(repo: &git2::Repository) -> Option<String> {
+    // Try to get the reflog for the remote tracking branch
+    if let Ok(reflog) = repo.reflog("refs/remotes/origin/HEAD") {
+        if let Some(entry) = reflog.iter().next() {
+            let time = entry.committer().when();
+            let datetime = chrono::DateTime::from_timestamp(time.seconds(), 0)?;
+            let local_time = datetime.with_timezone(&chrono::Local);
+            return Some(format_relative_time(local_time));
+        }
+    }
+
+    // Fallback: check if .git/FETCH_HEAD exists and get its modification time
+    if let Ok(metadata) = std::fs::metadata(".git/FETCH_HEAD") {
+        if let Ok(modified) = metadata.modified() {
+            let datetime = chrono::DateTime::<chrono::Local>::from(modified);
+            return Some(format_relative_time(datetime));
+        }
+    }
+
+    None
+}
+
+/// Format time relative to now (e.g., "2 minutes ago")
+pub fn format_relative_time(time: chrono::DateTime<chrono::Local>) -> String {
+    let now = chrono::Local::now();
+    let duration = now.signed_duration_since(time);
+
+    if duration.num_seconds() < 60 {
+        "Just now".to_string()
+    } else if duration.num_minutes() < 60 {
+        format!("{} minutes ago", duration.num_minutes())
+    } else if duration.num_hours() < 24 {
+        format!("{} hours ago", duration.num_hours())
+    } else {
+        format!("{} days ago", duration.num_days())
+    }
+}
+
+/// Format SystemTime as relative time string
+pub fn format_system_time_relative(system_time: std::time::SystemTime) -> String {
+    match system_time.duration_since(std::time::UNIX_EPOCH) {
+        Ok(duration) => {
+            if let Some(datetime) = chrono::DateTime::from_timestamp(duration.as_secs() as i64, 0) {
+                let local_time = datetime.with_timezone(&chrono::Local);
+                format_relative_time(local_time)
+            } else {
+                "Unknown time".to_string()
+            }
+        }
+        Err(_) => "Unknown time".to_string(),
+    }
+}
+
+/// Fetch from remote origin
+pub fn fetch_origin() -> Result<SyncOperation, GitError> {
+    let start_time = std::time::SystemTime::now();
+
+    // Try git2-rs first, but with a fallback to git command
+    match fetch_origin_git2() {
+        Ok(operation) => Ok(operation),
+        Err(_e) => {
+            // Silent fallback to git command - this is expected for some SSH configurations
+            fetch_origin_fallback(start_time)
+        }
+    }
+}
+
+/// Fetch using git2-rs
+fn fetch_origin_git2() -> Result<SyncOperation, GitError> {
+    let start_time = std::time::SystemTime::now();
+
+    let repo = git2::Repository::open(".")?;
+    let mut remote = repo.find_remote("origin")?;
+
+    // Create callbacks for authentication and progress
+    let mut callbacks = git2::RemoteCallbacks::new();
+    callbacks.credentials(|url, username_from_url, allowed_types| {
+        // Try different authentication methods in order of preference
+        if allowed_types.contains(git2::CredentialType::SSH_KEY) {
+            // Try SSH key from agent first
+            if let Ok(cred) = git2::Cred::ssh_key_from_agent(username_from_url.unwrap_or("git")) {
+                return Ok(cred);
+            }
+        }
+
+        if allowed_types.contains(git2::CredentialType::USER_PASS_PLAINTEXT) {
+            // For HTTPS, try default credentials (this will prompt if needed)
+            if let Ok(cred) = git2::Cred::credential_helper(
+                &git2::Config::open_default().unwrap_or_else(|_| git2::Config::new().unwrap()),
+                url,
+                username_from_url,
+            ) {
+                return Ok(cred);
+            }
+        }
+
+        // If all else fails, return an error
+        Err(git2::Error::from_str(
+            "No suitable authentication method found",
+        ))
+    });
+
+    // Set up fetch options
+    let mut fetch_options = git2::FetchOptions::new();
+    fetch_options.remote_callbacks(callbacks);
+
+    match remote.fetch(&[] as &[&str], Some(&mut fetch_options), None) {
+        Ok(()) => Ok(SyncOperation {
+            operation_type: SyncOperationType::Fetch,
+            status: OperationStatus::Success,
+            message: "Successfully fetched from remote".to_string(),
+            timestamp: start_time,
+        }),
+        Err(e) => Err(GitError::Git2(e)),
+    }
+}
+
+/// Fallback fetch using git command
+fn fetch_origin_fallback(start_time: std::time::SystemTime) -> Result<SyncOperation, GitError> {
+    let output = std::process::Command::new("git")
+        .args(&["fetch", "origin"])
+        .output()
+        .map_err(GitError::Io)?;
+
+    if output.status.success() {
+        Ok(SyncOperation {
+            operation_type: SyncOperationType::Fetch,
+            status: OperationStatus::Success,
+            message: "Successfully fetched from remote (fallback)".to_string(),
+            timestamp: start_time,
+        })
+    } else {
+        Ok(SyncOperation {
+            operation_type: SyncOperationType::Fetch,
+            status: OperationStatus::Error,
+            message: format!(
+                "Failed to fetch: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ),
+            timestamp: start_time,
+        })
+    }
+}
+
+/// Pull from remote origin (with optional rebase)
+pub fn pull_origin(use_rebase: bool) -> Result<SyncOperation, GitError> {
+    let start_time = std::time::SystemTime::now();
+
+    // First fetch
+    let fetch_result = fetch_origin()?;
+    if matches!(fetch_result.status, OperationStatus::Error) {
+        return Ok(SyncOperation {
+            operation_type: SyncOperationType::Pull,
+            status: OperationStatus::Error,
+            message: format!("Pull failed during fetch: {}", fetch_result.message),
+            timestamp: start_time,
+        });
+    }
+
+    let repo = git2::Repository::open(".")?;
+
+    // Get current branch and remote tracking branch
+    let head = repo.head()?;
+    let local_oid = head
+        .target()
+        .ok_or_else(|| GitError::Other("No HEAD commit".to_string()))?;
+
+    let branch_name = head.shorthand().unwrap_or("HEAD");
+    let remote_branch_name = format!("origin/{}", branch_name);
+
+    let remote_branch = match repo.find_branch(&remote_branch_name, git2::BranchType::Remote) {
+        Ok(branch) => branch,
+        Err(_) => {
+            return Ok(SyncOperation {
+                operation_type: SyncOperationType::Pull,
+                status: OperationStatus::Error,
+                message: "No remote tracking branch found".to_string(),
+                timestamp: start_time,
+            });
+        }
+    };
+
+    let remote_oid = remote_branch
+        .get()
+        .target()
+        .ok_or_else(|| GitError::Other("No remote branch commit".to_string()))?;
+
+    // Check if we're already up to date
+    if local_oid == remote_oid {
+        return Ok(SyncOperation {
+            operation_type: SyncOperationType::Pull,
+            status: OperationStatus::Success,
+            message: "Already up to date".to_string(),
+            timestamp: start_time,
+        });
+    }
+
+    // Perform merge or rebase
+    if use_rebase {
+        match perform_rebase(&repo, local_oid, remote_oid) {
+            Ok(()) => Ok(SyncOperation {
+                operation_type: SyncOperationType::Pull,
+                status: OperationStatus::Success,
+                message: "Successfully rebased local changes".to_string(),
+                timestamp: start_time,
+            }),
+            Err(e) => Ok(SyncOperation {
+                operation_type: SyncOperationType::Pull,
+                status: OperationStatus::Error,
+                message: format!("Rebase failed: {}", e),
+                timestamp: start_time,
+            }),
+        }
+    } else {
+        match perform_merge(&repo, remote_oid) {
+            Ok(()) => Ok(SyncOperation {
+                operation_type: SyncOperationType::Pull,
+                status: OperationStatus::Success,
+                message: "Successfully merged remote changes".to_string(),
+                timestamp: start_time,
+            }),
+            Err(e) => Ok(SyncOperation {
+                operation_type: SyncOperationType::Pull,
+                status: OperationStatus::Error,
+                message: format!("Merge failed: {}", e),
+                timestamp: start_time,
+            }),
+        }
+    }
+}
+
+/// Perform a rebase operation
+fn perform_rebase(
+    repo: &git2::Repository,
+    local_oid: git2::Oid,
+    remote_oid: git2::Oid,
+) -> Result<(), GitError> {
+    // Get commits for rebase
+    let local_commit = repo.find_commit(local_oid)?;
+    let remote_commit = repo.find_commit(remote_oid)?;
+
+    // Find merge base
+    let merge_base = repo.merge_base(local_oid, remote_oid)?;
+    let base_commit = repo.find_commit(merge_base)?;
+
+    // Create AnnotatedCommit objects for rebase
+    let local_annotated = repo.find_annotated_commit(local_oid)?;
+    let base_annotated = repo.find_annotated_commit(merge_base)?;
+    let remote_annotated = repo.find_annotated_commit(remote_oid)?;
+
+    // Initialize rebase
+    let mut rebase = repo.rebase(
+        Some(&local_annotated),
+        Some(&base_annotated),
+        Some(&remote_annotated),
+        None,
+    )?;
+
+    // Process each rebase operation
+    while let Some(operation) = rebase.next() {
+        let _op = operation?;
+
+        // Get the signature for the commit
+        let signature = repo.signature()?;
+
+        // Commit the rebased changes
+        rebase.commit(None, &signature, None)?;
+    }
+
+    // Finish the rebase
+    rebase.finish(None)?;
+
+    Ok(())
+}
+
+/// Perform a merge operation
+fn perform_merge(repo: &git2::Repository, remote_oid: git2::Oid) -> Result<(), GitError> {
+    // Get the remote commit
+    let remote_commit = repo.find_commit(remote_oid)?;
+    let remote_tree = remote_commit.tree()?;
+
+    // Get current HEAD
+    let head = repo.head()?;
+    let local_commit = head.peel_to_commit()?;
+    let local_tree = local_commit.tree()?;
+
+    // Find common ancestor
+    let merge_base = repo.merge_base(local_commit.id(), remote_oid)?;
+    let base_commit = repo.find_commit(merge_base)?;
+    let base_tree = base_commit.tree()?;
+
+    // Perform the merge
+    let mut index = repo.merge_trees(&base_tree, &local_tree, &remote_tree, None)?;
+
+    // Check for conflicts
+    if index.has_conflicts() {
+        return Err(GitError::Other("Merge conflicts detected".to_string()));
+    }
+
+    // Write the merged index
+    let tree_oid = index.write_tree_to(repo)?;
+    let tree = repo.find_tree(tree_oid)?;
+
+    // Create merge commit
+    let signature = repo.signature()?;
+    let message = format!(
+        "Merge remote-tracking branch 'origin/{}'",
+        head.shorthand().unwrap_or("HEAD")
+    );
+
+    repo.commit(
+        Some("HEAD"),
+        &signature,
+        &signature,
+        &message,
+        &tree,
+        &[&local_commit, &remote_commit],
+    )?;
+
+    Ok(())
+}
+
+/// Push to remote origin
+pub fn push_origin() -> Result<SyncOperation, GitError> {
+    let start_time = std::time::SystemTime::now();
+
+    let repo = git2::Repository::open(".")?;
+    let mut remote = repo.find_remote("origin")?;
+
+    // Get current branch
+    let head = repo.head()?;
+    let branch_name = head.shorthand().unwrap_or("HEAD");
+    let refspec = format!("refs/heads/{}:refs/heads/{}", branch_name, branch_name);
+
+    // Create callbacks for authentication
+    let mut callbacks = git2::RemoteCallbacks::new();
+    callbacks.credentials(|url, username_from_url, allowed_types| {
+        // Try different authentication methods in order of preference
+        if allowed_types.contains(git2::CredentialType::SSH_KEY) {
+            // Try SSH key from agent first
+            if let Ok(cred) = git2::Cred::ssh_key_from_agent(username_from_url.unwrap_or("git")) {
+                return Ok(cred);
+            }
+        }
+
+        if allowed_types.contains(git2::CredentialType::USER_PASS_PLAINTEXT) {
+            // For HTTPS, try default credentials (this will prompt if needed)
+            if let Ok(cred) = git2::Cred::credential_helper(
+                &git2::Config::open_default().unwrap_or_else(|_| git2::Config::new().unwrap()),
+                url,
+                username_from_url,
+            ) {
+                return Ok(cred);
+            }
+        }
+
+        // If all else fails, return an error
+        Err(git2::Error::from_str(
+            "No suitable authentication method found",
+        ))
+    });
+
+    // Set up push options
+    let mut push_options = git2::PushOptions::new();
+    push_options.remote_callbacks(callbacks);
+
+    match remote.push(&[&refspec], Some(&mut push_options)) {
+        Ok(()) => Ok(SyncOperation {
+            operation_type: SyncOperationType::Push,
+            status: OperationStatus::Success,
+            message: "Successfully pushed to remote".to_string(),
+            timestamp: start_time,
+        }),
+        Err(e) => Ok(SyncOperation {
+            operation_type: SyncOperationType::Push,
+            status: OperationStatus::Error,
+            message: format!("Failed to push: {}", e),
+            timestamp: start_time,
+        }),
+    }
+}
+
+/// Refresh remote status (fetch + get status)
+pub fn refresh_remote_status() -> Result<(RemoteStatus, SyncOperation), GitError> {
+    let fetch_op = fetch_origin()?;
+    let remote_status = get_remote_status()?;
+
+    let refresh_op = SyncOperation {
+        operation_type: SyncOperationType::Refresh,
+        status: if matches!(fetch_op.status, OperationStatus::Success) {
+            OperationStatus::Success
+        } else {
+            OperationStatus::Error
+        },
+        message: if matches!(fetch_op.status, OperationStatus::Success) {
+            format!(
+                "Updated status - {} ahead, {} behind",
+                remote_status.ahead, remote_status.behind
+            )
+        } else {
+            format!("Failed to refresh: {}", fetch_op.message)
+        },
+        timestamp: fetch_op.timestamp,
+    };
+
+    Ok((remote_status, refresh_op))
 }

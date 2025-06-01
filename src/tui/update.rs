@@ -100,8 +100,8 @@ pub fn render_update_tab(f: &mut Frame, area: Rect, state: &AppState) {
         return;
     }
 
-    // Mock check for remote origin (in real implementation, this would check actual git remotes)
-    let has_remote = check_has_remote_origin();
+    // Check for remote origin using real git operations
+    let has_remote = crate::git::has_remote_origin().unwrap_or(false);
 
     if !has_remote {
         render_no_remote_message(f, area, &theme);
@@ -197,7 +197,7 @@ fn render_no_remote_message(f: &mut Frame, area: Rect, theme: &Theme) {
     f.render_widget(message, area);
 }
 
-fn render_sync_interface(f: &mut Frame, area: Rect, _state: &AppState, theme: &Theme) {
+fn render_sync_interface(f: &mut Frame, area: Rect, state: &AppState, theme: &Theme) {
     // Split into three sections: remote status, sync actions, and recent activity
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -208,22 +208,56 @@ fn render_sync_interface(f: &mut Frame, area: Rect, _state: &AppState, theme: &T
         ])
         .split(area);
 
-    render_remote_status(f, chunks[0], theme);
-    render_sync_actions(f, chunks[1], theme);
-    render_recent_activity(f, chunks[2], theme);
+    render_remote_status(f, chunks[0], state, theme);
+    render_sync_actions(f, chunks[1], state, theme);
+    render_recent_activity(f, chunks[2], state, theme);
 }
 
-fn render_remote_status(f: &mut Frame, area: Rect, theme: &Theme) {
-    // Mock remote status data
-    let remote = get_mock_remote_status();
+fn render_remote_status(f: &mut Frame, area: Rect, state: &AppState, theme: &Theme) {
+    // Get remote status from app state or fetch it
+    let remote_status = match &state.update_remote_status {
+        Some(status) => status.clone(),
+        None => {
+            // Fallback to fetching status if not cached
+            match crate::git::get_remote_status() {
+                Ok(status) => status,
+                Err(_) => {
+                    // Show error message if we can't get remote status
+                    let error_text = vec![
+                        Line::from(vec![
+                            Span::styled("Error: ", theme.error_style()),
+                            Span::styled("Unable to fetch remote status", theme.text_style()),
+                        ]),
+                        Line::from(""),
+                        Line::from("Press [Shift+R] to refresh"),
+                    ];
 
-    let url_text = format!("({})", remote.url);
-    let ahead_behind_text = if remote.ahead > 0 && remote.behind > 0 {
-        format!("{} ahead, {} behind", remote.ahead, remote.behind)
-    } else if remote.ahead > 0 {
-        format!("{} ahead", remote.ahead)
-    } else if remote.behind > 0 {
-        format!("{} behind", remote.behind)
+                    let error_block = Paragraph::new(error_text).style(theme.text_style()).block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title("Remote Repository Status - [Shift+R] Refresh")
+                            .title_style(theme.title_style())
+                            .border_style(theme.border_style())
+                            .style(theme.secondary_background_style()),
+                    );
+
+                    f.render_widget(error_block, area);
+                    return;
+                }
+            }
+        }
+    };
+
+    let url_text = format!("({})", remote_status.url);
+    let ahead_behind_text = if remote_status.ahead > 0 && remote_status.behind > 0 {
+        format!(
+            "{} ahead, {} behind",
+            remote_status.ahead, remote_status.behind
+        )
+    } else if remote_status.ahead > 0 {
+        format!("{} ahead", remote_status.ahead)
+    } else if remote_status.behind > 0 {
+        format!("{} behind", remote_status.behind)
     } else {
         "Up to date".to_string()
     };
@@ -231,18 +265,18 @@ fn render_remote_status(f: &mut Frame, area: Rect, theme: &Theme) {
     let status_text = vec![
         Line::from(vec![
             Span::styled("Remote: ", theme.accent2_style()),
-            Span::styled(&remote.name, theme.text_style()),
+            Span::styled(&remote_status.name, theme.text_style()),
             Span::raw(" "),
             Span::styled(&url_text, theme.muted_text_style()),
         ]),
         Line::from(""),
         Line::from(vec![
             Span::styled("Status: ", theme.accent2_style()),
-            if remote.ahead > 0 && remote.behind > 0 {
+            if remote_status.ahead > 0 && remote_status.behind > 0 {
                 Span::styled(&ahead_behind_text, theme.warning_style())
-            } else if remote.ahead > 0 {
+            } else if remote_status.ahead > 0 {
                 Span::styled(&ahead_behind_text, theme.info_style())
-            } else if remote.behind > 0 {
+            } else if remote_status.behind > 0 {
                 Span::styled(&ahead_behind_text, theme.warning_style())
             } else {
                 Span::styled(&ahead_behind_text, theme.success_style())
@@ -251,7 +285,7 @@ fn render_remote_status(f: &mut Frame, area: Rect, theme: &Theme) {
         Line::from(vec![
             Span::styled("Last updated: ", theme.accent2_style()),
             Span::styled(
-                remote.last_fetch.as_deref().unwrap_or("Never"),
+                remote_status.last_fetch.as_deref().unwrap_or("Never"),
                 theme.accent3_style(),
             ),
         ]),
@@ -269,25 +303,58 @@ fn render_remote_status(f: &mut Frame, area: Rect, theme: &Theme) {
     f.render_widget(status_block, area);
 }
 
-fn render_sync_actions(f: &mut Frame, area: Rect, theme: &Theme) {
+fn render_sync_actions(f: &mut Frame, area: Rect, state: &AppState, theme: &Theme) {
     // Split into two columns for actions
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(area);
 
-    render_download_section(f, chunks[0], theme);
-    render_upload_section(f, chunks[1], theme);
+    render_download_section(f, chunks[0], state, theme);
+    render_upload_section(f, chunks[1], state, theme);
 }
 
-fn render_download_section(f: &mut Frame, area: Rect, theme: &Theme) {
-    let remote = get_mock_remote_status();
+fn render_download_section(f: &mut Frame, area: Rect, state: &AppState, theme: &Theme) {
+    let remote_status = match &state.update_remote_status {
+        Some(status) => status,
+        None => {
+            // Show loading or error state
+            let loading_text = vec![
+                Line::from(vec![Span::styled(
+                    "↓ Download Changes",
+                    Style::default()
+                        .fg(theme.green)
+                        .add_modifier(Modifier::BOLD),
+                )]),
+                Line::from(""),
+                Line::from("Loading status..."),
+                Line::from(""),
+                Line::from("Press [Shift+R] to refresh"),
+            ];
 
-    let available_text = if remote.behind > 0 {
-        format!("{} new changes", remote.behind)
+            let loading_block = Paragraph::new(loading_text)
+                .style(theme.text_style())
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("Download from Remote")
+                        .title_style(theme.title_style())
+                        .border_style(theme.border_style())
+                        .style(theme.secondary_background_style()),
+                );
+
+            f.render_widget(loading_block, area);
+            return;
+        }
+    };
+
+    let available_text = if remote_status.behind > 0 {
+        format!("{} new changes", remote_status.behind)
     } else {
         "No new changes".to_string()
     };
+
+    let pull_mode = if state.pull_rebase { "rebase" } else { "merge" };
 
     let download_text = vec![
         Line::from(vec![Span::styled(
@@ -297,7 +364,7 @@ fn render_download_section(f: &mut Frame, area: Rect, theme: &Theme) {
                 .add_modifier(Modifier::BOLD),
         )]),
         Line::from(""),
-        if remote.behind > 0 {
+        if remote_status.behind > 0 {
             Line::from(vec![
                 Span::styled("Available: ", theme.accent2_style()),
                 Span::styled(&available_text, theme.info_style()),
@@ -308,9 +375,13 @@ fn render_download_section(f: &mut Frame, area: Rect, theme: &Theme) {
                 Span::styled(&available_text, theme.success_style()),
             ])
         },
+        Line::from(vec![
+            Span::styled("Mode: ", theme.accent2_style()),
+            Span::styled(pull_mode, theme.accent3_style()),
+        ]),
         Line::from(""),
         Line::from(vec![Span::styled("Actions:", theme.accent2_style())]),
-        if remote.behind > 0 {
+        if remote_status.behind > 0 {
             Line::from(vec![
                 Span::raw("  ◦ "),
                 Span::styled("[P] Pull", theme.accent_style()),
@@ -339,11 +410,40 @@ fn render_download_section(f: &mut Frame, area: Rect, theme: &Theme) {
     f.render_widget(download_block, area);
 }
 
-fn render_upload_section(f: &mut Frame, area: Rect, theme: &Theme) {
-    let remote = get_mock_remote_status();
+fn render_upload_section(f: &mut Frame, area: Rect, state: &AppState, theme: &Theme) {
+    let remote_status = match &state.update_remote_status {
+        Some(status) => status,
+        None => {
+            // Show loading or error state
+            let loading_text = vec![
+                Line::from(vec![Span::styled(
+                    "↑ Upload Changes",
+                    Style::default().fg(theme.blue).add_modifier(Modifier::BOLD),
+                )]),
+                Line::from(""),
+                Line::from("Loading status..."),
+                Line::from(""),
+                Line::from("Press [Shift+R] to refresh"),
+            ];
 
-    let ready_text = if remote.ahead > 0 {
-        format!("{} local changes", remote.ahead)
+            let loading_block = Paragraph::new(loading_text)
+                .style(theme.text_style())
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("Upload to Remote")
+                        .title_style(theme.title_style())
+                        .border_style(theme.border_style())
+                        .style(theme.secondary_background_style()),
+                );
+
+            f.render_widget(loading_block, area);
+            return;
+        }
+    };
+
+    let ready_text = if remote_status.ahead > 0 {
+        format!("{} local changes", remote_status.ahead)
     } else {
         "Nothing to upload".to_string()
     };
@@ -354,7 +454,7 @@ fn render_upload_section(f: &mut Frame, area: Rect, theme: &Theme) {
             Style::default().fg(theme.blue).add_modifier(Modifier::BOLD),
         )]),
         Line::from(""),
-        if remote.ahead > 0 {
+        if remote_status.ahead > 0 {
             Line::from(vec![
                 Span::styled("Ready: ", theme.accent2_style()),
                 Span::styled(&ready_text, theme.info_style()),
@@ -367,7 +467,7 @@ fn render_upload_section(f: &mut Frame, area: Rect, theme: &Theme) {
         },
         Line::from(""),
         Line::from(vec![Span::styled("Actions:", theme.accent2_style())]),
-        if remote.ahead > 0 {
+        if remote_status.ahead > 0 {
             Line::from(vec![
                 Span::raw("  ◦ "),
                 Span::styled("[U] Push", theme.accent_style()),
@@ -394,22 +494,54 @@ fn render_upload_section(f: &mut Frame, area: Rect, theme: &Theme) {
     f.render_widget(upload_block, area);
 }
 
-fn render_recent_activity(f: &mut Frame, area: Rect, theme: &Theme) {
-    let operations = get_mock_recent_operations();
+fn render_recent_activity(f: &mut Frame, area: Rect, state: &AppState, theme: &Theme) {
+    let operations = &state.update_recent_operations;
 
-    let activity_items: Vec<ListItem> = operations
-        .iter()
-        .map(|op| {
-            let status_style = op.status.style(theme);
-            ListItem::new(Line::from(vec![
-                Span::styled(op.status.symbol(), status_style),
-                Span::raw(" "),
-                Span::styled(op.operation_type.as_str(), theme.accent2_style()),
-                Span::raw(" - "),
-                Span::styled(&op.message, theme.text_style()),
-            ]))
-        })
-        .collect();
+    let activity_items: Vec<ListItem> = if operations.is_empty() {
+        vec![ListItem::new(Line::from(vec![Span::styled(
+            "No recent activity",
+            theme.muted_text_style(),
+        )]))]
+    } else {
+        operations
+            .iter()
+            .map(|op| {
+                let status_style = match op.status {
+                    crate::git::OperationStatus::Pending => theme.muted_text_style(),
+                    crate::git::OperationStatus::InProgress => theme.info_style(),
+                    crate::git::OperationStatus::Success => theme.success_style(),
+                    crate::git::OperationStatus::Error => theme.error_style(),
+                };
+
+                let status_symbol = match op.status {
+                    crate::git::OperationStatus::Pending => "◦",
+                    crate::git::OperationStatus::InProgress => "→",
+                    crate::git::OperationStatus::Success => "✓",
+                    crate::git::OperationStatus::Error => "✗",
+                };
+
+                let operation_name = match op.operation_type {
+                    crate::git::SyncOperationType::Fetch => "Fetch",
+                    crate::git::SyncOperationType::Pull => "Download",
+                    crate::git::SyncOperationType::Push => "Upload",
+                    crate::git::SyncOperationType::Refresh => "Refresh",
+                };
+
+                // Format the timestamp as relative time
+                let relative_time = crate::git::format_system_time_relative(op.timestamp);
+
+                ListItem::new(Line::from(vec![
+                    Span::styled(status_symbol, status_style),
+                    Span::raw(" "),
+                    Span::styled(operation_name, theme.accent2_style()),
+                    Span::raw(" - "),
+                    Span::styled(&op.message, theme.text_style()),
+                    Span::raw(" "),
+                    Span::styled(format!("({})", relative_time), theme.muted_text_style()),
+                ]))
+            })
+            .collect()
+    };
 
     let activity_list = List::new(activity_items)
         .block(
@@ -423,46 +555,4 @@ fn render_recent_activity(f: &mut Frame, area: Rect, theme: &Theme) {
         .style(theme.text_style());
 
     f.render_widget(activity_list, area);
-}
-
-// Mock data functions (replace with real git operations later)
-fn check_has_remote_origin() -> bool {
-    // Mock: return true for demo purposes
-    // In real implementation: check if git remote origin exists
-    true
-}
-
-fn get_mock_remote_status() -> RemoteStatus {
-    RemoteStatus {
-        name: "origin".to_string(),
-        url: "https://github.com/user/gitix.git".to_string(),
-        ahead: 2,
-        behind: 1,
-        last_fetch: Some("2 minutes ago".to_string()),
-    }
-}
-
-fn get_mock_recent_operations() -> Vec<SyncOperation> {
-    vec![
-        SyncOperation {
-            operation_type: SyncOperationType::Refresh,
-            status: OperationStatus::Success,
-            message: "Updated status - 2 ahead, 1 behind".to_string(),
-        },
-        SyncOperation {
-            operation_type: SyncOperationType::Push,
-            status: OperationStatus::Success,
-            message: "Uploaded 2 local changes".to_string(),
-        },
-        SyncOperation {
-            operation_type: SyncOperationType::Pull,
-            status: OperationStatus::Error,
-            message: "Merge conflict detected".to_string(),
-        },
-        SyncOperation {
-            operation_type: SyncOperationType::Fetch,
-            status: OperationStatus::Success,
-            message: "Remote is up to date".to_string(),
-        },
-    ]
 }

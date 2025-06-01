@@ -141,6 +141,25 @@ pub fn start_tui(state: &mut AppState) {
                     f.render_widget(modal, area);
                 }
 
+                // Error popup modal
+                if state.show_error_popup {
+                    let area = centered_rect(70, 10, size);
+                    let error_text = format!("{}\n\nPress [Enter] or [Esc] to close", state.error_popup_message);
+                    let modal = Paragraph::new(error_text)
+                        .alignment(ratatui::layout::Alignment::Left)
+                        .wrap(ratatui::widgets::Wrap { trim: true })
+                        .style(theme.text_style())
+                        .block(
+                            Block::default()
+                                .title(state.error_popup_title.as_str())
+                                .title_style(theme.title_style())
+                                .borders(Borders::ALL)
+                                .border_style(theme.error_style()) // Red border for errors
+                                .style(theme.secondary_background_style()), // Mantle background
+                        );
+                    f.render_widget(modal, area);
+                }
+
                 // Status bar with key hints (crust background per guidelines)
                 let hints = match active_tab {
                     1 => "[Tab] Next Tab  [Shift+Tab] Previous Tab  [↑↓] Navigate  [Enter] Open  [q] Quit",
@@ -161,12 +180,27 @@ pub fn start_tui(state: &mut AppState) {
         if event::poll(std::time::Duration::from_millis(100)).unwrap() {
             if let Event::Key(key_event) = event::read().unwrap() {
                 if key_event.kind == KeyEventKind::Press {
+                    // If showing error popup, only handle Enter/Esc to close it
+                    if state.show_error_popup {
+                        match key_event.code {
+                            KeyCode::Enter | KeyCode::Esc => {
+                                state.hide_error();
+                            }
+                            _ => {}
+                        }
+                        continue;
+                    }
+
                     // If showing prompt, only handle Y/N
                     if active_tab == 0 && state.show_init_prompt {
                         match key_event.code {
                             KeyCode::Char('y') | KeyCode::Char('Y') => {
-                                if state.try_init_repo().is_err() {
-                                    // Optionally: show error message
+                                if let Err(e) = state.try_init_repo() {
+                                    // Show user-friendly error popup
+                                    state.show_error(
+                                        "Repository Initialization Failed",
+                                        &format!("Failed to initialize Git repository:\n\n{}", e)
+                                    );
                                 }
                             }
                             KeyCode::Char('n') | KeyCode::Char('N') => {
@@ -190,6 +224,10 @@ pub fn start_tui(state: &mut AppState) {
                             if active_tab == 2 && next_tab != 2 {
                                 state.invalidate_save_changes_git_status();
                             }
+                            // Load update tab data when entering update tab
+                            if next_tab == 3 && active_tab != 3 {
+                                state.load_update_tab();
+                            }
                             active_tab = next_tab;
                         }
                         (KeyCode::BackTab, _) | (KeyCode::Tab, KeyModifiers::SHIFT) => {
@@ -200,6 +238,10 @@ pub fn start_tui(state: &mut AppState) {
                             // Invalidate save changes git status cache when leaving save changes tab
                             if active_tab == 2 && prev_tab != 2 {
                                 state.invalidate_save_changes_git_status();
+                            }
+                            // Load update tab data when entering update tab
+                            if prev_tab == 3 && active_tab != 3 {
+                                state.load_update_tab();
                             }
                             active_tab = prev_tab;
                         }
@@ -321,8 +363,8 @@ pub fn start_tui(state: &mut AppState) {
                             // Save changes tab: commit staged files (only works when in file list and no popups)
                             if state.save_changes_focus == SaveChangesFocus::FileList {
                                 if let Err(e) = state.commit_staged_files() {
-                                    // TODO: Show error message in UI
-                                    eprintln!("Commit failed: {}", e);
+                                    // Show user-friendly error popup
+                                    state.show_error("Commit Failed", &format!("Failed to commit changes:\n\n{}", e));
                                 }
                             } else {
                                 // In commit message area, add a new line
@@ -336,23 +378,6 @@ pub fn start_tui(state: &mut AppState) {
                         (KeyCode::Char('T'), KeyModifiers::SHIFT) if active_tab == 2 && !state.show_commit_help && !state.show_template_popup => {
                             // Save changes tab: show template popup
                             state.toggle_template_popup();
-                        }
-                        // Update tab key bindings
-                        (KeyCode::Char('R'), KeyModifiers::SHIFT) if active_tab == 3 && state.git_enabled => {
-                            // Update tab: refresh remote and local status
-                            // TODO: Implement actual refresh functionality
-                            // This would fetch from remote and update local commit count
-                            println!("Refreshing repository status...");
-                        }
-                        (KeyCode::Char('p') | KeyCode::Char('P'), _) if active_tab == 3 && state.git_enabled => {
-                            // Update tab: pull changes from remote
-                            // TODO: Implement actual pull functionality
-                            println!("Pulling changes from remote...");
-                        }
-                        (KeyCode::Char('u') | KeyCode::Char('U'), _) if active_tab == 3 && state.git_enabled => {
-                            // Update tab: push changes to remote
-                            // TODO: Implement actual push functionality
-                            println!("Pushing changes to remote...");
                         }
                         // Handle commit message input when focused on commit message and no popups are shown
                         _ if active_tab == 2
@@ -373,6 +398,10 @@ pub fn start_tui(state: &mut AppState) {
                             if active_tab == 2 && next_tab != 2 {
                                 state.invalidate_save_changes_git_status();
                             }
+                            // Load update tab data when entering update tab
+                            if next_tab == 3 && active_tab != 3 {
+                                state.load_update_tab();
+                            }
                             active_tab = next_tab;
                         }
                         (KeyCode::BackTab, _) | (KeyCode::Tab, KeyModifiers::SHIFT) => {
@@ -384,18 +413,30 @@ pub fn start_tui(state: &mut AppState) {
                             if active_tab == 2 && prev_tab != 2 {
                                 state.invalidate_save_changes_git_status();
                             }
+                            // Load update tab data when entering update tab
+                            if prev_tab == 3 && active_tab != 3 {
+                                state.load_update_tab();
+                            }
                             active_tab = prev_tab;
                         }
                         (KeyCode::Left, KeyModifiers::CONTROL) if active_tab == 4 && state.git_enabled => {
-                            // Settings tab: switch to Author panel
-                            state.settings_focus = crate::app::SettingsFocus::Author;
+                            // Settings tab: cycle panels backward
+                            state.settings_focus = match state.settings_focus {
+                                crate::app::SettingsFocus::Author => crate::app::SettingsFocus::Git,
+                                crate::app::SettingsFocus::Theme => crate::app::SettingsFocus::Author,
+                                crate::app::SettingsFocus::Git => crate::app::SettingsFocus::Theme,
+                            };
                         }
                         (KeyCode::Right, KeyModifiers::CONTROL) if active_tab == 4 && state.git_enabled => {
-                            // Settings tab: switch to Theme panel
-                            state.settings_focus = crate::app::SettingsFocus::Theme;
+                            // Settings tab: cycle panels forward
+                            state.settings_focus = match state.settings_focus {
+                                crate::app::SettingsFocus::Author => crate::app::SettingsFocus::Theme,
+                                crate::app::SettingsFocus::Theme => crate::app::SettingsFocus::Git,
+                                crate::app::SettingsFocus::Git => crate::app::SettingsFocus::Author,
+                            };
                         }
                         (KeyCode::Left, _) if active_tab == 4 && state.git_enabled => {
-                            // Settings tab: cycle theme colors backward (only works in Theme panel)
+                            // Settings tab: cycle theme colors backward (only works in Theme panel) or toggle Git settings
                             if state.settings_focus == crate::app::SettingsFocus::Theme {
                                 use crate::app::ThemeFocus;
                                 match state.settings_theme_focus {
@@ -412,10 +453,17 @@ pub fn start_tui(state: &mut AppState) {
                                         state.current_theme_title = cycle_title_color_backward(state.current_theme_title);
                                     }
                                 }
+                            } else if state.settings_focus == crate::app::SettingsFocus::Git {
+                                // Toggle pull rebase setting
+                                state.pull_rebase = !state.pull_rebase;
+                                // Clear status message when changing settings
+                                if state.settings_status_message.is_some() {
+                                    state.settings_status_message = None;
+                                }
                             }
                         }
                         (KeyCode::Right, _) if active_tab == 4 && state.git_enabled => {
-                            // Settings tab: cycle theme colors forward (only works in Theme panel)
+                            // Settings tab: cycle theme colors forward (only works in Theme panel) or toggle Git settings
                             if state.settings_focus == crate::app::SettingsFocus::Theme {
                                 use crate::app::ThemeFocus;
                                 match state.settings_theme_focus {
@@ -431,6 +479,13 @@ pub fn start_tui(state: &mut AppState) {
                                     ThemeFocus::Title => {
                                         state.current_theme_title = cycle_title_color_forward(state.current_theme_title);
                                     }
+                                }
+                            } else if state.settings_focus == crate::app::SettingsFocus::Git {
+                                // Toggle pull rebase setting
+                                state.pull_rebase = !state.pull_rebase;
+                                // Clear status message when changing settings
+                                if state.settings_status_message.is_some() {
+                                    state.settings_status_message = None;
                                 }
                             }
                         }
@@ -448,6 +503,9 @@ pub fn start_tui(state: &mut AppState) {
                                         ThemeFocus::Accent => ThemeFocus::Title,
                                     };
                                 }
+                                crate::app::SettingsFocus::Git => {
+                                    // Only one Git setting for now, so no navigation needed
+                                }
                             }
                         }
                         (KeyCode::Down, _) if active_tab == 4 && state.git_enabled => {
@@ -463,6 +521,9 @@ pub fn start_tui(state: &mut AppState) {
                                         ThemeFocus::Accent3 => ThemeFocus::Title,
                                         ThemeFocus::Title => ThemeFocus::Accent,
                                     };
+                                }
+                                crate::app::SettingsFocus::Git => {
+                                    // Only one Git setting for now, so no navigation needed
                                 }
                             }
                         }
@@ -496,6 +557,31 @@ pub fn start_tui(state: &mut AppState) {
                                     }
                                 }
                             }
+                        }
+                        // Update tab operations
+                        (KeyCode::Char('p'), KeyModifiers::NONE) if active_tab == 3 && state.git_enabled => {
+                            // Pull operation
+                            state.perform_pull();
+                        }
+                        (KeyCode::Char('P'), KeyModifiers::NONE) if active_tab == 3 && state.git_enabled => {
+                            // Pull operation (uppercase)
+                            state.perform_pull();
+                        }
+                        (KeyCode::Char('u'), KeyModifiers::NONE) if active_tab == 3 && state.git_enabled => {
+                            // Push operation
+                            state.perform_push();
+                        }
+                        (KeyCode::Char('U'), KeyModifiers::NONE) if active_tab == 3 && state.git_enabled => {
+                            // Push operation (uppercase)
+                            state.perform_push();
+                        }
+                        (KeyCode::Char('r'), KeyModifiers::SHIFT) if active_tab == 3 && state.git_enabled => {
+                            // Refresh remote status
+                            state.refresh_update_remote_status();
+                        }
+                        (KeyCode::Char('R'), KeyModifiers::SHIFT) if active_tab == 3 && state.git_enabled => {
+                            // Refresh remote status (uppercase)
+                            state.refresh_update_remote_status();
                         }
                         _ => {}
                     }
