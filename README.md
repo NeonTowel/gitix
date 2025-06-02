@@ -136,10 +136,24 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the Unlicense - see the [LICENSE](LICENSE) file for details.
 
 ## Acknowledgments
 
 - [Catppuccin](https://catppuccin.com/) for the beautiful color palette
 - [Ratatui](https://ratatui.rs/) for the excellent TUI framework
 - [gix](https://github.com/Byron/gitoxide) for Git operations
+- [git2-rs](https://github.com/rust-lang/git2-rs) for Git bindings to libgit2
+
+## Build Requirements (Linux)
+
+For building on Linux (tested on Fedora 42 on WSL), make sure you have the following packages installed:
+
+- `perl-core` (required for building OpenSSL dependencies)
+- `gcc` (C compiler)
+
+You can install them using:
+
+```bash
+sudo dnf install perl-core gcc
+```
